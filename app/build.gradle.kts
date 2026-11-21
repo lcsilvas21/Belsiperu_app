@@ -1,1 +1,3 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application android:label="BELSIPERU" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:usesCleartextTraffic="false"><activity android:name=".MainActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity></application></manifest>
+plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
+android { namespace = "pe.belsiperu.cotizaciones"; compileSdk = 35
+ defaultConfig { applicationId = "pe.belsiperu.cotizaciones"; minSdk = 26; targetSdk = 35; versionCode = 1; versionName = "0.1" } }
