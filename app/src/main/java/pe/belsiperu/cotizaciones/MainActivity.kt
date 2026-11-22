@@ -1428,6 +1428,10 @@ class MainActivity:Activity() {
     else->status.text="Ingresa un DNI de 8 dígitos o RUC de 11 dígitos."
    }
   }
+  // El botón de consulta se sitúa junto al campo DNI/RUC sin alterar su callback.
+  val consultButton=body.getChildAt(body.childCount-1)
+  body.removeView(consultButton)
+  body.addView(consultButton,body.indexOfChild(status)+1)
   button(if(editId==null)"✓ Guardar cliente" else "✓ Guardar cambios"){
    val nombre=name.text.toString().trim()
    val documento=doc.text.toString().trim()
