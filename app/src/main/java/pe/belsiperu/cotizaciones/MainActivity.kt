@@ -1093,6 +1093,17 @@ class MainActivity:Activity() {
  @Deprecated("Legacy activity result used for minimal SDK example")
  override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){
   super.onActivityResult(requestCode,resultCode,data)
+  if(requestCode==93 && resultCode==RESULT_OK && data?.data!=null){
+   val uri=data.data!!
+   try{
+    contentResolver.takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    pendingDraftPhotoUri=uri.toString()
+    draftPhotoPreview?.let{showProductImage(it,pendingDraftPhotoUri)}
+    toast("Fotografía seleccionada. Guarda el producto para conservarla.")
+   }catch(e:Exception){
+    toast("No se pudo acceder a la foto: "+(e.message?:"Comprueba los permisos"))
+   }
+  }
   if(requestCode==92 && resultCode==RESULT_OK && data?.data!=null){
    val id=pendingPhotoProduct?:return
    val uri=data.data!!
