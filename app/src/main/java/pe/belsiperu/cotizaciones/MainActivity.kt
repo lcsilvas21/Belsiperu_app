@@ -1374,7 +1374,7 @@ class MainActivity:Activity() {
   button(if(returnToQuote)"← Volver a cotización" else "← Volver a clientes"){
    if(returnToQuote)newQuote() else clients()
   }
-  heading("Datos del contacto","Consulta DNI o RUC o completa los datos manualmente.")
+  heading("Datos del contacto","Puedes escribir los datos sin usar la consulta DNI/RUC. El documento, el nombre y la dirección son necesarios para la proforma.")
   label("Número de documento")
   val doc=input("DNI (8) o RUC (11)")
   doc.inputType=InputType.TYPE_CLASS_NUMBER
@@ -1384,6 +1384,13 @@ class MainActivity:Activity() {
   label("Nombre o razón social *")
   val name=input("Nombre o razón social")
   name.setText(previous("name"))
+  label("Dirección principal para la proforma *")
+  val mainAddress=input("Dirección completa de entrega o fiscal")
+  mainAddress.setSingleLine(false)
+  mainAddress.minLines=2
+  mainAddress.inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+   InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+  mainAddress.setText(addresses.firstOrNull{it.isMain}?.address?:previous("address"))
   label("Correo electrónico")
   val email=input("nombre@correo.com")
   email.inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
@@ -1562,7 +1569,10 @@ class MainActivity:Activity() {
          applied=true
         }
        }
-       if(applied)redrawAddresses()
+       if(applied){
+        mainAddress.setText(addresses.firstOrNull{it.isMain}?.address?:data.direccion)
+        redrawAddresses()
+       }
        status.text="RUC consultado: "+data.estado.ifBlank{"Sin estado"}+
         " · "+data.condicion.ifBlank{"Sin condición"}+
         (if(applied)". Dirección principal agregada." else ". Dirección existente conservada.")
@@ -1594,9 +1604,20 @@ class MainActivity:Activity() {
    val documento=doc.text.toString().trim()
    val correo=email.text.toString().trim()
    if(nombre.isBlank()){toast("Ingresa el nombre o razón social.");return@button}
-   if(documento.isNotBlank() &&
-    !documento.matches(Regex("[0-9]{8}|[0-9]{11}"))){
-    toast("El DNI debe tener 8 dígitos y el RUC 11.");return@button
+   if(!documento.matches(Regex("[0-9]{8}|[0-9]{11}"))){
+    doc.error="El DNI necesita 8 dígitos o el RUC 11."
+    toast("Ingresa un DNI o RUC para la proforma.");return@button
+   }
+   val principal=mainAddress.text.toString().trim()
+   if(principal.isBlank()){
+    mainAddress.error="La dirección principal es necesaria para el PDF."
+    toast("Ingresa la dirección principal del cliente.");return@button
+   }
+   val mainIndex=addresses.indexOfFirst{it.isMain}
+   if(mainIndex>=0)addresses[mainIndex].address=principal
+   else{
+    addresses.forEach{it.isMain=false}
+    addresses.add(0,ClientAddress(null,"Principal",principal,"",true))
    }
    if(correo.isNotBlank() && !android.util.Patterns.EMAIL_ADDRESS.matcher(correo).matches()){
     email.error="Revisa el correo electrónico";return@button
