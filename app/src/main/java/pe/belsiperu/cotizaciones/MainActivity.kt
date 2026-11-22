@@ -435,12 +435,26 @@ class MainActivity:Activity() {
   typeface=Typeface.create("sans-serif",if(bold)Typeface.BOLD else Typeface.NORMAL)
   setLineSpacing(d(2).toFloat(),1.02f)
  }
- private fun logo()=ImageView(this).apply{
-  try{assets.open("belsiperu_logo.png").use{setImageBitmap(BitmapFactory.decodeStream(it))}}catch(_:Exception){}
+ // Logo de cabecera: respeta el logo configurado, recorta el fondo y
+ // agranda la marca sin estirarla. La opción no funciona en acceso con PIN.
+ private fun logo(goHome:Boolean)=ImageView(this).apply{
+  try{
+   val original=loadCompanyLogoBitmap()
+   if(original!=null){
+    val prepared=try{logoSinFondo(original)}catch(_:Exception){original}
+    setImageBitmap(prepared)
+    if(prepared!==original)original.recycle()
+   }
+  }catch(_:Exception){}
   scaleType=ImageView.ScaleType.FIT_CENTER
-  background=round(Color.WHITE,11)
-  setPadding(d(6),d(5),d(6),d(5))
-  contentDescription="BELSIPERU"
+  background=round(Color.WHITE,13)
+  setPadding(d(3),d(3),d(3),d(3))
+  contentDescription=if(goHome)"Logo BELSIPERU: volver al Inicio" else "Logotipo BELSIPERU"
+  if(goHome){
+   isClickable=true
+   isFocusable=true
+   setOnClickListener{home()}
+  }
  }
  private fun card()=LinearLayout(this).apply{
   orientation=LinearLayout.VERTICAL;setPadding(d(15),d(15),d(15),d(15))
@@ -507,11 +521,15 @@ class MainActivity:Activity() {
    orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL
    setPadding(d(15),d(13),d(15),d(15));setBackgroundColor(navy)
   }
-  top.addView(logo(),LinearLayout.LayoutParams(d(102),d(50)))
-  val names=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(d(13),0,0,0)}
+  top.addView(logo(!login),LinearLayout.LayoutParams(d(123),d(65)))
+  val names=LinearLayout(this).apply{
+   orientation=LinearLayout.VERTICAL
+   setPadding(d(12),0,0,0)
+  }
   names.addView(line(if(login)"Acceso seguro" else title,19f,Color.WHITE,true))
-  names.addView(line("FERRETERÍA  •  COTIZACIONES  •  INVENTARIO",9f,Color.rgb(207,230,232)))
-  top.addView(names);outer.addView(top)
+  names.addView(line("GESTIÓN COMERCIAL",11f,Color.rgb(207,230,232)))
+  top.addView(names,LinearLayout.LayoutParams(0,-2,1f))
+  outer.addView(top)
   val scroll=ScrollView(this).apply{setBackgroundColor(pale);isFillViewport=true}
   body=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(d(17),d(16),d(17),d(25))}
   scroll.addView(body)
@@ -603,7 +621,7 @@ class MainActivity:Activity() {
    orientation=LinearLayout.VERTICAL;setPadding(d(19),d(20),d(19),d(20))
    background=GradientDrawable(GradientDrawable.Orientation.TL_BR,intArrayOf(navy,Color.rgb(8,87,93))).apply{cornerRadius=d(19).toFloat()}
   }
-  hero.addView(line("¡Hola! Bienvenido a BELSIPERU",21f,Color.WHITE,true))
+  hero.addView(line("¡Hola! Bienvenido a "+welcomeDisplayName(),21f,Color.WHITE,true))
   hero.addView(line("Tu negocio organizado, desde un solo lugar.",13f,Color.WHITE))
   body.addView(hero)
   button("＋  NUEVA COTIZACIÓN"){newQuote()}
@@ -667,6 +685,7 @@ class MainActivity:Activity() {
   button("🏢 Empresa · Datos para el encabezado"){companySettings()}
   button("🖨 Impresión · Bancos, cabecera y pie de página"){printingSettings()}
   button("🔢 Numeración automática de cotizaciones"){quoteNumberSettings()}
+  button("👋 Personalizar mensaje de bienvenida"){welcomeMessageSettings()}
   heading("Otros ajustes")
   button("Configurar consulta RUC / DNI"){rucSettings()}
   info("Protección de datos","Mantén protegidas tus claves y haz copias de seguridad del catálogo. Esta APK de prueba guarda su configuración en el dispositivo.",Color.rgb(169,105,19))
@@ -674,6 +693,53 @@ class MainActivity:Activity() {
   button("Volver al inicio"){home()}
  }
 
+ // Texto mostrado solo en la tarjeta de inicio; no cambia la razón social,
+ // el logotipo, la numeración ni los datos impresos en PDF.
+ private fun welcomeDisplayName():String{
+  val value=getSharedPreferences("belsiperu_home_ui",MODE_PRIVATE)
+   .getString("welcome_name","BELSIPERU")?.trim().orEmpty()
+  return value.ifBlank{"BELSIPERU"}
+ }
+ private fun welcomeMessageSettings(){
+  screen("Configuración · Bienvenida")
+  button("← Configuración"){settings()}
+  heading("Personalizar bienvenida",
+   "Cambia únicamente el nombre mostrado después de «¡Hola! Bienvenido a». "+
+   "No modifica el nombre legal de BELSIPERU ni sus documentos PDF.")
+  label("Palabra o nombre para mostrar en el inicio")
+  val name=input("Ejemplo: Mi Empresa")
+  name.filters=arrayOf(android.text.InputFilter.LengthFilter(40))
+  name.setText(welcomeDisplayName())
+  val preview=line("¡Hola! Bienvenido a "+welcomeDisplayName(),18f,navy,true)
+  body.addView(preview,LinearLayout.LayoutParams(-1,-2).apply{
+   setMargins(0,d(12),0,d(12))
+  })
+  name.addTextChangedListener(object:TextWatcher{
+   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){
+    val label=s?.toString()?.trim().orEmpty().ifBlank{"BELSIPERU"}
+    preview.text="¡Hola! Bienvenido a "+label
+   }
+   override fun afterTextChanged(s:Editable?){}
+  })
+  button("✓ Guardar mensaje de bienvenida"){
+   val label=name.text.toString().trim().replace(Regex("[\\r\\n\\t]+")," ")
+    .replace(Regex(" {2,}")," ")
+   if(label.isBlank()){
+    name.error="Ingresa una palabra o nombre.";return@button
+   }
+   getSharedPreferences("belsiperu_home_ui",MODE_PRIVATE).edit()
+    .putString("welcome_name",label).apply()
+   toast("Mensaje de bienvenida actualizado")
+   home()
+  }
+  button("Restaurar el nombre BELSIPERU"){
+   getSharedPreferences("belsiperu_home_ui",MODE_PRIVATE).edit()
+    .remove("welcome_name").apply()
+   toast("Se restauró la bienvenida original")
+   home()
+  }
+ }
  private fun quoteNumberSettings(){
   screen("Configuración · Numeración")
   button("← Configuración"){settings()}
