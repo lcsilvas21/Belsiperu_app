@@ -19,6 +19,7 @@ on:
       - fix/pie-pdf-centrado-v1-15
       - feat/disenos-pdf-moderno-corporativo-v1-16
       - feat/pdf-referencias-fieles-v1-17
+      - feat/pdf-ajustes-v1-18
   pull_request:
     branches:
       - main
@@ -47,6 +48,6 @@ jobs:
       - name: Guardar APK
         uses: actions/upload-artifact@v4
         with:
-          name: BELSIPERU-V1.17-APK-PRUEBA
+          name: BELSIPERU-V1.18-APK-PRUEBA
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
