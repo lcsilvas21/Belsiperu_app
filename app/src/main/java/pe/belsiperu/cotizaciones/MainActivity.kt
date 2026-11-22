@@ -24,11 +24,13 @@ import org.json.JSONObject
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
-class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,5) {
+class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,6) {
  override fun onCreate(db:SQLiteDatabase) {
   db.execSQL("CREATE TABLE products(id INTEGER PRIMARY KEY AUTOINCREMENT,code TEXT,name TEXT,price REAL,currency TEXT,stock INTEGER,min_stock INTEGER,photo_uri TEXT,kind TEXT NOT NULL DEFAULT 'PRODUCTO',barcode TEXT NOT NULL DEFAULT '',category TEXT NOT NULL DEFAULT '',brand TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT 'UNIDADES',purchase_price REAL NOT NULL DEFAULT 0,sale_includes_igv INTEGER NOT NULL DEFAULT 0,purchase_includes_igv INTEGER NOT NULL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'GRAVADO',isc_type TEXT NOT NULL DEFAULT 'NO APLICA',sunat_code TEXT NOT NULL DEFAULT '',icbper INTEGER NOT NULL DEFAULT 0,sell_without_stock INTEGER NOT NULL DEFAULT 0,weight REAL NOT NULL DEFAULT 0)")
   db.execSQL("CREATE TABLE product_price_variants(id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER NOT NULL,label TEXT NOT NULL,price REAL NOT NULL,FOREIGN KEY(product_id) REFERENCES products(id))")
-  db.execSQL("CREATE TABLE clients(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,document TEXT,address TEXT)")
+  db.execSQL("CREATE TABLE clients(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,document TEXT,address TEXT,phone TEXT NOT NULL DEFAULT '',email TEXT NOT NULL DEFAULT '',notes TEXT NOT NULL DEFAULT '',is_supplier INTEGER NOT NULL DEFAULT 0,is_driver INTEGER NOT NULL DEFAULT 0,is_carrier INTEGER NOT NULL DEFAULT 0)")
+  db.execSQL("CREATE TABLE client_addresses(id INTEGER PRIMARY KEY AUTOINCREMENT,client_id INTEGER NOT NULL,label TEXT NOT NULL DEFAULT 'Principal',address TEXT NOT NULL,ubigeo TEXT NOT NULL DEFAULT '',is_main INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(client_id) REFERENCES clients(id))")
+  db.execSQL("CREATE INDEX idx_client_addresses_client ON client_addresses(client_id)")
   db.execSQL("CREATE TABLE quotes(id INTEGER PRIMARY KEY AUTOINCREMENT,client TEXT,product TEXT,qty INTEGER,unit_price REAL,discount REAL,igv INTEGER,currency TEXT,total REAL,status TEXT,created TEXT,product_photo TEXT,discount_amount REAL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO',product_id INTEGER,include_product_photo INTEGER NOT NULL DEFAULT 1)")
   db.execSQL("CREATE TABLE movements(id INTEGER PRIMARY KEY AUTOINCREMENT,product TEXT,qty INTEGER,reason TEXT,created TEXT)")
  }
@@ -65,6 +67,19 @@ class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,5) {
   if(oldVersion<5){
    // Historial previo conserva su comportamiento original de incluir fotografías.
    db.execSQL("ALTER TABLE quotes ADD COLUMN include_product_photo INTEGER NOT NULL DEFAULT 1")
+  }
+  if(oldVersion<6){
+   // No se eliminan clientes ni sus direcciones históricas.
+   db.execSQL("ALTER TABLE clients ADD COLUMN phone TEXT NOT NULL DEFAULT ''")
+   db.execSQL("ALTER TABLE clients ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+   db.execSQL("ALTER TABLE clients ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+   db.execSQL("ALTER TABLE clients ADD COLUMN is_supplier INTEGER NOT NULL DEFAULT 0")
+   db.execSQL("ALTER TABLE clients ADD COLUMN is_driver INTEGER NOT NULL DEFAULT 0")
+   db.execSQL("ALTER TABLE clients ADD COLUMN is_carrier INTEGER NOT NULL DEFAULT 0")
+   db.execSQL("CREATE TABLE IF NOT EXISTS client_addresses(id INTEGER PRIMARY KEY AUTOINCREMENT,client_id INTEGER NOT NULL,label TEXT NOT NULL DEFAULT 'Principal',address TEXT NOT NULL,ubigeo TEXT NOT NULL DEFAULT '',is_main INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(client_id) REFERENCES clients(id))")
+   db.execSQL("CREATE INDEX IF NOT EXISTS idx_client_addresses_client ON client_addresses(client_id)")
+   // Las direcciones antes guardadas en clients.address quedan como direcciones principales.
+   db.execSQL("INSERT INTO client_addresses(client_id,label,address,ubigeo,is_main) SELECT id,'Principal',address,'',1 FROM clients WHERE TRIM(COALESCE(address,''))<>''")
   }
  }
 }
@@ -1054,108 +1069,424 @@ class MainActivity:Activity() {
   }
  }
 
+ private data class ClientAddress(
+  var id:Long?,var label:String,var address:String,var ubigeo:String,var isMain:Boolean
+ )
+
  private fun clients(){
   screen("Clientes")
-  heading("Nuevo cliente","Consulta RUC o DNI para completar automáticamente la información del cliente.")
-  label("Documento (RUC o DNI)")
-  val doc=input("RUC de 11 dígitos / DNI de 8 dígitos")
+  heading("Clientes registrados","Consulta, edita y administra tu agenda de clientes.")
+  button("＋ Nuevo cliente"){clientEditor()}
+  label("Buscar cliente")
+  val search=input("Nombre, RUC, DNI, teléfono o correo")
+  val list=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+  body.addView(list)
+  fun refresh(){
+   list.removeAllViews()
+   val term=search.text.toString().trim()
+   val cur=db.readableDatabase.rawQuery(
+    "SELECT id,name,document,address,phone,email FROM clients ORDER BY name COLLATE NOCASE,id DESC",null)
+   var matches=0
+   try{
+    while(cur.moveToNext()){
+     val id=cur.getLong(0)
+     val name=cur.getString(1)?:""
+     val document=cur.getString(2)?:""
+     val address=cur.getString(3)?:""
+     val phone=cur.getString(4)?:""
+     val email=cur.getString(5)?:""
+     if(term.isNotBlank()&&!listOf(name,document,address,phone,email)
+       .any{it.contains(term,ignoreCase=true)})continue
+     matches++
+     val entry=card()
+     entry.addView(line(name.ifBlank{"Cliente sin nombre"},17f,navy,true))
+     entry.addView(line("Documento: "+document.ifBlank{"No indicado"},13f,muted))
+     if(phone.isNotBlank())entry.addView(line("Teléfono: "+phone,13f,ink))
+     if(email.isNotBlank())entry.addView(line("Correo: "+email,13f,ink))
+     if(address.isNotBlank())entry.addView(line("Principal: "+address,12f,muted))
+     val actions=LinearLayout(this@MainActivity).apply{orientation=LinearLayout.HORIZONTAL}
+     fun action(title:String,click:()->Unit){
+      val v=line(title,13f,green,true).apply{
+       gravity=Gravity.CENTER;minHeight=d(43)
+       isClickable=true;isFocusable=true
+       setOnClickListener{click()}
+       background=round(pale,10,border)
+      }
+      actions.addView(v,LinearLayout.LayoutParams(0,-2,1f).apply{setMargins(d(3),d(10),d(3),0)})
+     }
+     action("Ver"){clientDetail(id)}
+     action("Editar"){clientEditor(id)}
+     action("Eliminar"){deleteClient(id)}
+     entry.addView(actions)
+     list.addView(entry,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(8),0,d(8))})
+    }
+   }finally{cur.close()}
+   if(matches==0)list.addView(line("No se encontraron clientes.",14f,muted))
+  }
+  search.addTextChangedListener(object:TextWatcher{
+   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){refresh()}
+   override fun afterTextChanged(s:Editable?){}
+  })
+  refresh()
+ }
+
+ private fun deleteClient(id:Long){
+  val cur=db.readableDatabase.rawQuery("SELECT name FROM clients WHERE id=?",arrayOf(id.toString()))
+  val name=try{if(cur.moveToFirst())cur.getString(0)?:"este cliente" else "este cliente"}finally{cur.close()}
+  AlertDialog.Builder(this).setTitle("Eliminar cliente")
+   .setMessage("¿Eliminar a "+name+" y sus direcciones? El historial de cotizaciones ya guardadas no se modificará.")
+   .setNegativeButton("Cancelar",null)
+   .setPositiveButton("Eliminar"){_,_->
+    val database=db.writableDatabase
+    try{
+     database.beginTransaction()
+     database.delete("client_addresses","client_id=?",arrayOf(id.toString()))
+     database.delete("clients","id=?",arrayOf(id.toString()))
+     database.setTransactionSuccessful()
+     toast("Cliente eliminado")
+    }catch(_:Exception){toast("No se pudo eliminar el cliente.")}
+    finally{if(database.inTransaction())database.endTransaction()}
+    clients()
+   }.show()
+ }
+
+ private fun clientDetail(id:Long){
+  val cur=db.readableDatabase.rawQuery("SELECT name,document,phone,email,notes,is_supplier,is_driver,is_carrier FROM clients WHERE id=?",
+   arrayOf(id.toString()))
+  val details=try{
+   if(cur.moveToFirst())(0..7).map{i->cur.getString(i)?:""} else null
+  }finally{cur.close()}
+  if(details==null){toast("No se encontró el cliente.");clients();return}
+  screen("Detalle del cliente")
+  heading(details[0], "Documento: "+details[1].ifBlank{"No indicado"})
+  button("✎ Editar contacto"){clientEditor(id)}
+  heading("Información de contacto")
+  info("Teléfono",details[2].ifBlank{"Sin registrar"})
+  info("Correo electrónico",details[3].ifBlank{"Sin registrar"})
+  info("Observaciones",details[4].ifBlank{"Sin observaciones"})
+  heading("Direcciones")
+  val curAddr=db.readableDatabase.rawQuery(
+   "SELECT label,address,ubigeo,is_main FROM client_addresses WHERE client_id=? ORDER BY is_main DESC,id",
+   arrayOf(id.toString()))
+  var count=0
+  try{while(curAddr.moveToNext()){
+   count++
+   val name=curAddr.getString(0)?:"Dirección"
+   val address=curAddr.getString(1)?:""
+   val ubigeo=curAddr.getString(2)?:""
+   val primary=curAddr.getInt(3)==1
+   info(name+(if(primary)" · Principal" else ""),address+
+    if(ubigeo.isNotBlank())"\nUbigeo: "+ubigeo else "")
+  }}finally{curAddr.close()}
+  if(count==0)info("Direcciones","Sin direcciones registradas")
+  heading("Opciones")
+  info("Proveedor",if(details[5]=="1")"Sí" else "No")
+  info("Conductor",if(details[6]=="1")"Sí" else "No")
+  info("Empresa de transporte",if(details[7]=="1")"Sí" else "No")
+  button("Eliminar cliente"){deleteClient(id)}
+  button("← Volver a clientes"){clients()}
+ }
+
+ private fun clientEditor(editId:Long?=null){
+  val saved=mutableMapOf<String,String>()
+  if(editId!=null){
+   val old=db.readableDatabase.rawQuery("SELECT * FROM clients WHERE id=?",arrayOf(editId.toString()))
+   try{
+    if(!old.moveToFirst()){toast("No se encontró el cliente.");clients();return}
+    for(i in 0 until old.columnCount)saved[old.getColumnName(i)]=old.getString(i)?:""
+   }finally{old.close()}
+  }
+  fun previous(key:String)=saved[key]?:""
+  val addresses=mutableListOf<ClientAddress>()
+  if(editId!=null){
+   val ac=db.readableDatabase.rawQuery(
+    "SELECT id,label,address,ubigeo,is_main FROM client_addresses WHERE client_id=? ORDER BY is_main DESC,id",
+    arrayOf(editId.toString()))
+   try{
+    while(ac.moveToNext()){
+     addresses.add(ClientAddress(ac.getLong(0),ac.getString(1)?:"Principal",
+      ac.getString(2)?:"",ac.getString(3)?:"",ac.getInt(4)==1))
+    }
+   }finally{ac.close()}
+   // También protege direcciones de registros creados en versiones anteriores.
+   if(addresses.isEmpty()&&previous("address").isNotBlank()){
+    addresses.add(ClientAddress(null,"Principal",previous("address"),"",true))
+   }
+  }
+  if(addresses.isNotEmpty()&&addresses.none{it.isMain})addresses[0].isMain=true
+  screen(if(editId==null)"Nuevo cliente" else "Editar contacto")
+  button("← Volver a clientes"){clients()}
+  heading("Datos del contacto","Consulta DNI o RUC o completa los datos manualmente.")
+  label("Número de documento")
+  val doc=input("DNI (8) o RUC (11)")
   doc.inputType=InputType.TYPE_CLASS_NUMBER
   doc.filters=arrayOf(android.text.InputFilter.LengthFilter(11))
-  val status=line("Consulta RUC (11 dígitos) o DNI (8 dígitos) utilizando la misma conexión.",12f,muted)
+  val status=line("Escribe 8 dígitos para DNI u 11 para RUC.",12f,muted)
   body.addView(status)
+  label("Nombre o razón social *")
   val name=input("Nombre o razón social")
-  val addr=input("Dirección fiscal / dirección del cliente")
-  // La detección es automática: 8 dígitos = DNI, 11 dígitos = RUC.
-  // Solo se realiza la consulta cuando se presiona el botón.
+  name.setText(previous("name"))
+  label("Correo electrónico")
+  val email=input("nombre@correo.com")
+  email.inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+  email.setText(previous("email"))
+  label("Teléfono")
+  val phone=input("Número de teléfono, p. ej. 999 999 999")
+  phone.inputType=InputType.TYPE_CLASS_PHONE
+  phone.setText(previous("phone"))
+  label("Observaciones")
+  val notes=EditText(this).apply{
+   hint="Notas e indicaciones del cliente (opcional)"
+   textSize=15f;setTextColor(ink);setHintTextColor(muted)
+   setPadding(d(13),d(12),d(13),d(12))
+   inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+    InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+   setSingleLine(false);minLines=3;gravity=Gravity.TOP
+   background=round(Color.WHITE,12,border)
+   setText(previous("notes"))
+  }
+  body.addView(notes,LinearLayout.LayoutParams(-1,d(112)).apply{setMargins(0,d(4),0,d(8))})
+  heading("Direcciones","Agrega, modifica o elimina direcciones. Una será la principal.")
+  val addressList=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+  body.addView(addressList)
+  lateinit var redrawAddresses:()->Unit
+
+  fun editAddress(index:Int?){
+   val current=if(index!=null)addresses.getOrNull(index) else null
+   val fields=LinearLayout(this).apply{
+    orientation=LinearLayout.VERTICAL
+    setPadding(d(16),d(6),d(16),d(6))
+   }
+   fun field(title:String,value:String,multiline:Boolean=false):EditText{
+    fields.addView(line(title,14f,navy,true))
+    return EditText(this).apply{
+     hint=title;setText(value);textSize=15f;setTextColor(ink)
+     if(multiline){setSingleLine(false);minLines=2}
+     else{setSingleLine(true)}
+     setPadding(d(10),d(8),d(10),d(8))
+     background=round(Color.WHITE,10,border)
+     fields.addView(this,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(3),0,d(10))})
+    }
+   }
+   val tag=field("Tipo (Casa, Principal, Sucursal, Almacén)",current?.label?:"")
+   val address=field("Dirección completa *",current?.address?:"",true)
+   val ubigeo=field("Ubigeo (opcional)",current?.ubigeo?:"")
+   ubigeo.inputType=InputType.TYPE_CLASS_NUMBER
+   ubigeo.filters=arrayOf(android.text.InputFilter.LengthFilter(6))
+   val main=CheckBox(this).apply{
+    text="Utilizar como dirección principal"
+    isChecked=current?.isMain?:addresses.isEmpty()
+   }
+   fields.addView(main)
+   val scroll=ScrollView(this).apply{addView(fields)}
+   val dialog=AlertDialog.Builder(this)
+    .setTitle(if(index==null)"Agregar dirección" else "Editar dirección")
+    .setView(scroll).setNegativeButton("Cancelar",null)
+    .setPositiveButton("Guardar",null).create()
+   dialog.setOnShowListener{
+    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener{
+     val addressText=address.text.toString().trim()
+     if(addressText.isBlank()){
+      address.error="Ingresa la dirección"
+     }else{
+      val newIsMain=main.isChecked||addresses.isEmpty()
+      if(newIsMain)addresses.forEach{it.isMain=false}
+      val item=ClientAddress(current?.id,
+       tag.text.toString().trim().ifBlank{if(newIsMain)"Principal" else "Otra dirección"},
+       addressText,ubigeo.text.toString().trim(),newIsMain)
+      if(index==null)addresses.add(item) else addresses[index]=item
+      if(addresses.isNotEmpty()&&addresses.none{it.isMain})addresses[0].isMain=true
+      redrawAddresses();dialog.dismiss()
+     }
+    }
+   }
+   dialog.show()
+  }
+  redrawAddresses={
+   addressList.removeAllViews()
+   if(addresses.isEmpty()){
+    addressList.addView(line("No hay direcciones. Puedes agregar una cuando lo necesites.",13f,muted))
+   }
+   addresses.forEachIndexed{index,item->
+    val entry=card()
+    entry.addView(line(item.label+(if(item.isMain)" · Principal" else ""),15f,navy,true))
+    entry.addView(line(item.address,14f,ink))
+    entry.addView(line(if(item.ubigeo.isBlank())"Sin ubigeo" else "Ubigeo: "+item.ubigeo,12f,muted))
+    val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
+    fun action(t:String,task:()->Unit){
+     val link=line(t,13f,green,true).apply{
+      gravity=Gravity.CENTER;minHeight=d(42)
+      isClickable=true;isFocusable=true;setOnClickListener{task()}
+     }
+     row.addView(link,LinearLayout.LayoutParams(0,-2,1f))
+    }
+    action("Editar"){editAddress(index)}
+    if(!item.isMain)action("Principal"){
+     addresses.forEach{it.isMain=false}
+     addresses[index].isMain=true
+     redrawAddresses()
+    }
+    action("Eliminar"){
+     AlertDialog.Builder(this).setTitle("Eliminar dirección")
+      .setMessage("¿Quitar esta dirección de la ficha del cliente?")
+      .setNegativeButton("Cancelar",null).setPositiveButton("Eliminar"){_,_->
+       addresses.removeAt(index)
+       if(addresses.isNotEmpty()&&addresses.none{it.isMain})addresses[0].isMain=true
+       redrawAddresses()
+      }.show()
+    }
+    entry.addView(row)
+    addressList.addView(entry,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(5),0,d(7))})
+   }
+  }
+  redrawAddresses()
+  button("＋ Agregar dirección"){editAddress(null)}
+  heading("Opciones")
+  val supplier=Switch(this).apply{text="¿Es un proveedor?";isChecked=previous("is_supplier")=="1"}
+  val driver=Switch(this).apply{text="¿Es un conductor?";isChecked=previous("is_driver")=="1"}
+  val carrier=Switch(this).apply{text="¿Es una empresa de transporte?";isChecked=previous("is_carrier")=="1"}
+  for(opt in listOf(supplier,driver,carrier)){
+   opt.textSize=15f;opt.setTextColor(ink)
+   opt.setPadding(d(9),d(9),d(9),d(9))
+   body.addView(opt,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(2),0,d(2))})
+  }
   doc.addTextChangedListener(object:TextWatcher{
    override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
    override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){
     val value=s?.toString()?.trim().orEmpty()
     status.text=when{
-     value.matches(Regex("[0-9]{8}"))->"DNI detectado (8 dígitos). Presiona Consultar documento."
-     value.matches(Regex("[0-9]{11}"))->"RUC detectado (11 dígitos). Presiona Consultar documento."
-     value.isEmpty()->"Ingresa 8 dígitos para DNI u 11 dígitos para RUC."
-     else->"Documento incompleto: el DNI requiere 8 dígitos y el RUC 11."
+     value.matches(Regex("[0-9]{8}"))->"DNI detectado (8 dígitos). Pulsa Consultar documento."
+     value.matches(Regex("[0-9]{11}"))->"RUC detectado (11 dígitos). Pulsa Consultar documento."
+     value.isBlank()->"Escribe 8 dígitos para DNI u 11 para RUC."
+     else->"Documento incompleto: DNI de 8 o RUC de 11 dígitos."
     }
    }
    override fun afterTextChanged(s:Editable?){}
   })
+  doc.setText(previous("document"))
   button("Consultar documento"){
-   val documento=doc.text.toString().trim()
+   val document=doc.text.toString().trim()
    when{
-    documento.matches(Regex("[0-9]{8}"))->{
+    document.matches(Regex("[0-9]{8}"))->{
      status.text="Consultando DNI…"
-     consultaDni(documento){data,error->
-      if(doc.text.toString().trim()!=documento){
+     consultaDni(document){data,error->
+      if(doc.text.toString().trim()!=document){
        status.text="El documento cambió durante la consulta. Vuelve a consultar."
       }else if(data!=null){
        name.setText(data.nombre)
-       // La consulta de DNI no proporciona dirección; preservar el dato manual.
-       status.text="DNI consultado: nombre completo obtenido. La dirección se ingresa manualmente."
+       status.text="DNI consultado. Revisa los nombres y guarda el cliente."
       }else{
        status.text=error?:"No se pudo consultar el DNI."
        if(error?.contains("Configura primero")==true){
-        AlertDialog.Builder(this).setTitle("Activar consulta de documentos")
-         .setMessage("Configura la conexión con Cloudflare para consultar RUC y DNI. Puedes guardar clientes manualmente.")
+        AlertDialog.Builder(this).setTitle("Configurar consultas")
+         .setMessage("Configura Cloudflare para consultar DNI y RUC. Puedes registrar el cliente manualmente.")
          .setNegativeButton("Después",null)
          .setPositiveButton("Configurar"){_,_->rucSettings()}.show()
        }
       }
      }
     }
-    documento.matches(Regex("[0-9]{11}"))->{
+    document.matches(Regex("[0-9]{11}"))->{
      status.text="Consultando RUC…"
-     consultaRuc(documento){data,error->
-      if(doc.text.toString().trim()!=documento){
+     consultaRuc(document){data,error->
+      if(doc.text.toString().trim()!=document){
        status.text="El documento cambió durante la consulta. Vuelve a consultar."
       }else if(data!=null){
        name.setText(data.razon)
-       addr.setText(data.direccion)
-       status.text="RUC consultado: ${data.estado.ifBlank{"Sin estado"}} · ${data.condicion.ifBlank{"Sin condición"}}. Verifica y guarda los datos."
+       var applied=false
+       if(data.direccion.isNotBlank()){
+        val mainIdx=addresses.indexOfFirst{it.isMain}
+        if(mainIdx<0){
+         addresses.add(ClientAddress(null,"Principal",data.direccion,"",true))
+         applied=true
+        }else if(addresses[mainIdx].address.isBlank()){
+         addresses[mainIdx].address=data.direccion
+         applied=true
+        }
+       }
+       if(applied)redrawAddresses()
+       status.text="RUC consultado: "+data.estado.ifBlank{"Sin estado"}+
+        " · "+data.condicion.ifBlank{"Sin condición"}+
+        (if(applied)". Dirección principal agregada." else ". Dirección existente conservada.")
        if(data.estado.uppercase(Locale.ROOT)!="ACTIVO"){
         AlertDialog.Builder(this).setTitle("Estado del contribuyente")
-         .setMessage("El RUC figura como ${data.estado}. Comprueba su situación antes de utilizarlo.")
+         .setMessage("El RUC figura como "+data.estado+". Comprueba su situación.")
          .setPositiveButton("Entendido",null).show()
        }
       }else{
        status.text=error?:"No se pudo consultar el RUC."
        if(error?.contains("Configura primero")==true){
-        AlertDialog.Builder(this).setTitle("Activar consulta de documentos")
-         .setMessage("Configura la conexión con Cloudflare para consultar RUC y DNI. Puedes guardar clientes manualmente.")
+        AlertDialog.Builder(this).setTitle("Configurar consultas")
+         .setMessage("Configura Cloudflare para consultar DNI y RUC. Puedes registrar el cliente manualmente.")
          .setNegativeButton("Después",null)
          .setPositiveButton("Configurar"){_,_->rucSettings()}.show()
        }
       }
      }
     }
-    else->status.text="Ingresa un DNI de 8 dígitos o un RUC de 11 dígitos."
+    else->status.text="Ingresa un DNI de 8 dígitos o RUC de 11 dígitos."
    }
   }
-  button("Guardar cliente"){
+  // El botón de consulta se sitúa junto al campo DNI/RUC sin alterar su callback.
+  val consultButton=body.getChildAt(body.childCount-1)
+  body.removeView(consultButton)
+  body.addView(consultButton,body.indexOfChild(status)+1)
+  button(if(editId==null)"✓ Guardar cliente" else "✓ Guardar cambios"){
    val nombre=name.text.toString().trim()
    val documento=doc.text.toString().trim()
-   val direccion=addr.text.toString().trim()
-   if(nombre.isEmpty()){toast("Indica el nombre o razón social");return@button}
-   if(documento.isNotEmpty() &&
-     !(documento.matches(Regex("[0-9]{8}")) || documento.matches(Regex("[0-9]{11}")))){
-    toast("El DNI requiere 8 dígitos y el RUC 11.");return@button
+   val correo=email.text.toString().trim()
+   if(nombre.isBlank()){toast("Ingresa el nombre o razón social.");return@button}
+   if(documento.isNotBlank() &&
+    !documento.matches(Regex("[0-9]{8}|[0-9]{11}"))){
+    toast("El DNI debe tener 8 dígitos y el RUC 11.");return@button
    }
+   if(correo.isNotBlank() && !android.util.Patterns.EMAIL_ADDRESS.matcher(correo).matches()){
+    email.error="Revisa el correo electrónico";return@button
+   }
+   val database=db.writableDatabase
+   if(documento.isNotBlank()){
+    val duplicate=database.rawQuery("SELECT id FROM clients WHERE document=? AND id<>? LIMIT 1",
+     arrayOf(documento,(editId?:-1L).toString()))
+    val exists=try{duplicate.moveToFirst()}finally{duplicate.close()}
+    if(exists){toast("Este documento ya pertenece a otro cliente. Edítalo desde la lista.");return@button}
+   }
+   val primary=addresses.firstOrNull{it.isMain}?.address
+    ?:addresses.firstOrNull()?.address?:""
    val values=android.content.ContentValues().apply{
-    put("name",nombre);put("document",documento);put("address",direccion)
+    put("name",nombre);put("document",documento);put("address",primary)
+    put("phone",phone.text.toString().trim());put("email",correo)
+    put("notes",notes.text.toString().trim())
+    put("is_supplier",if(supplier.isChecked)1 else 0)
+    put("is_driver",if(driver.isChecked)1 else 0)
+    put("is_carrier",if(carrier.isChecked)1 else 0)
    }
-   val sql=db.writableDatabase
-   val updated=if(documento.isNotEmpty())sql.update("clients",values,"document=?",arrayOf(documento)) else 0
-   if(updated==0)sql.insert("clients",null,values)
-   toast(if(updated>0)"Cliente actualizado" else "Cliente guardado")
-   clients()
+   var success=false
+   try{
+    database.beginTransaction()
+    val clientId=if(editId==null){
+     database.insertOrThrow("clients",null,values)
+    }else{
+     val updated=database.update("clients",values,"id=?",arrayOf(editId.toString()))
+     if(updated!=1)throw IllegalStateException("Cliente no encontrado")
+     editId
+    }
+    // Actualiza las direcciones de forma atómica, manteniendo una única principal.
+    database.delete("client_addresses","client_id=?",arrayOf(clientId.toString()))
+    addresses.forEachIndexed{index,a->
+     database.insertOrThrow("client_addresses",null,android.content.ContentValues().apply{
+      put("client_id",clientId)
+      put("label",a.label);put("address",a.address);put("ubigeo",a.ubigeo)
+      put("is_main",if(a.isMain || (index==0 && addresses.none{it.isMain}))1 else 0)
+     })
+    }
+    database.setTransactionSuccessful();success=true
+   }catch(e:Exception){
+    toast("No se pudo guardar el cliente: "+(e.message?:"Error inesperado"))
+   }finally{if(database.inTransaction())database.endTransaction()}
+   if(success){toast(if(editId==null)"Cliente registrado" else "Cliente actualizado");clients()}
   }
   button("Configurar consulta RUC / DNI"){rucSettings()}
-  heading("Clientes registrados")
-  val c=db.readableDatabase.rawQuery("SELECT name,document,address FROM clients ORDER BY id DESC",null)
-  while(c.moveToNext()){
-   info(c.getString(0)?:"Sin nombre", "Documento: ${c.getString(1)?:""}\n${c.getString(2)?:""}")
-  }
-  c.close()
  }
 
  private fun newQuote(){
