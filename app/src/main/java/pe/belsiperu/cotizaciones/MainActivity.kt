@@ -24,7 +24,7 @@ import org.json.JSONObject
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
-class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,6) {
+class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,7) {
  override fun onCreate(db:SQLiteDatabase) {
   db.execSQL("CREATE TABLE products(id INTEGER PRIMARY KEY AUTOINCREMENT,code TEXT,name TEXT,price REAL,currency TEXT,stock INTEGER,min_stock INTEGER,photo_uri TEXT,kind TEXT NOT NULL DEFAULT 'PRODUCTO',barcode TEXT NOT NULL DEFAULT '',category TEXT NOT NULL DEFAULT '',brand TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT 'UNIDADES',purchase_price REAL NOT NULL DEFAULT 0,sale_includes_igv INTEGER NOT NULL DEFAULT 0,purchase_includes_igv INTEGER NOT NULL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'GRAVADO',isc_type TEXT NOT NULL DEFAULT 'NO APLICA',sunat_code TEXT NOT NULL DEFAULT '',icbper INTEGER NOT NULL DEFAULT 0,sell_without_stock INTEGER NOT NULL DEFAULT 0,weight REAL NOT NULL DEFAULT 0)")
   db.execSQL("CREATE TABLE product_price_variants(id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER NOT NULL,label TEXT NOT NULL,price REAL NOT NULL,FOREIGN KEY(product_id) REFERENCES products(id))")
@@ -33,6 +33,8 @@ class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,6) {
   db.execSQL("CREATE INDEX idx_client_addresses_client ON client_addresses(client_id)")
   db.execSQL("CREATE TABLE quotes(id INTEGER PRIMARY KEY AUTOINCREMENT,client TEXT,product TEXT,qty INTEGER,unit_price REAL,discount REAL,igv INTEGER,currency TEXT,total REAL,status TEXT,created TEXT,product_photo TEXT,discount_amount REAL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO',product_id INTEGER,include_product_photo INTEGER NOT NULL DEFAULT 1)")
   db.execSQL("CREATE TABLE movements(id INTEGER PRIMARY KEY AUTOINCREMENT,product TEXT,qty INTEGER,reason TEXT,created TEXT)")
+  db.execSQL("CREATE TABLE quote_items(id INTEGER PRIMARY KEY AUTOINCREMENT,quote_id INTEGER NOT NULL,product_id INTEGER,code TEXT NOT NULL DEFAULT '',name TEXT NOT NULL,unit TEXT NOT NULL DEFAULT 'UNIDADES',qty INTEGER NOT NULL,unit_price REAL NOT NULL,discount_pct REAL NOT NULL DEFAULT 0,discount_amount REAL NOT NULL DEFAULT 0,igv INTEGER NOT NULL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO',line_total REAL NOT NULL,photo_uri TEXT,include_product_photo INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(quote_id) REFERENCES quotes(id))")
+  db.execSQL("CREATE INDEX idx_quote_items_quote ON quote_items(quote_id)")
  }
  override fun onUpgrade(db:SQLiteDatabase,oldVersion:Int,newVersion:Int) {
   if(oldVersion<2) {
@@ -80,6 +82,12 @@ class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,6) {
    db.execSQL("CREATE INDEX IF NOT EXISTS idx_client_addresses_client ON client_addresses(client_id)")
    // Las direcciones antes guardadas en clients.address quedan como direcciones principales.
    db.execSQL("INSERT INTO client_addresses(client_id,label,address,ubigeo,is_main) SELECT id,'Principal',address,'',1 FROM clients WHERE TRIM(COALESCE(address,''))<>''")
+  }
+  if(oldVersion<7){
+   db.execSQL("CREATE TABLE IF NOT EXISTS quote_items(id INTEGER PRIMARY KEY AUTOINCREMENT,quote_id INTEGER NOT NULL,product_id INTEGER,code TEXT NOT NULL DEFAULT '',name TEXT NOT NULL,unit TEXT NOT NULL DEFAULT 'UNIDADES',qty INTEGER NOT NULL,unit_price REAL NOT NULL,discount_pct REAL NOT NULL DEFAULT 0,discount_amount REAL NOT NULL DEFAULT 0,igv INTEGER NOT NULL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO',line_total REAL NOT NULL,photo_uri TEXT,include_product_photo INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(quote_id) REFERENCES quotes(id))")
+   db.execSQL("CREATE INDEX IF NOT EXISTS idx_quote_items_quote ON quote_items(quote_id)")
+   // Los presupuestos antiguos tenían una sola línea; se conserva su detalle.
+   db.execSQL("INSERT INTO quote_items(quote_id,product_id,code,name,unit,qty,unit_price,discount_pct,discount_amount,igv,tax_affectation,line_total,photo_uri,include_product_photo) SELECT q.id,q.product_id,COALESCE((SELECT p.code FROM products p WHERE p.id=q.product_id),''),q.product,'UNIDADES',q.qty,q.unit_price,q.discount,q.discount_amount,q.igv,q.tax_affectation,q.total,q.product_photo,q.include_product_photo FROM quotes q")
   }
  }
 }
