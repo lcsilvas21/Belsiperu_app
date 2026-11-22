@@ -11,14 +11,14 @@ android {
         applicationId = "pe.belsiperu.cotizaciones"
         minSdk = 26
         targetSdk = 35
-        versionCode = 30
-        versionName = "1.22"
+        versionCode = 31
+        versionName = "1.23"
     }
 
     // Instalación de prueba independiente: las bases SQLite de otras versiones no se comparten.
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".pdfv122"
+            applicationIdSuffix = ".pdfv123"
             versionNameSuffix = "-prueba"
         }
     }
