@@ -816,6 +816,18 @@ class MainActivity:Activity() {
    minStock.setText(previous("min_stock","0"))
    body.addView(line("Los servicios no manejan stock físico.",12f,muted))
   }
+  tax.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
+   override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
+   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){
+    val taxable=position==0
+    if(!taxable){
+     saleIgV.isChecked=false
+     purchaseIgV.isChecked=false
+    }
+    saleIgV.isEnabled=taxable
+    purchaseIgV.isEnabled=taxable
+   }
+  }
   fun refreshKind(){
    val service=kind.selectedItemPosition==1
    stock.isEnabled=!service
