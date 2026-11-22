@@ -1196,7 +1196,7 @@ class MainActivity:Activity() {
   button("← Volver a clientes"){clients()}
  }
 
- private fun clientEditor(editId:Long?=null){
+ private fun clientEditor(editId:Long?=null,returnToQuote:Boolean=false){
   val saved=mutableMapOf<String,String>()
   if(editId!=null){
    val old=db.readableDatabase.rawQuery("SELECT * FROM clients WHERE id=?",arrayOf(editId.toString()))
@@ -1224,7 +1224,9 @@ class MainActivity:Activity() {
   }
   if(addresses.isNotEmpty()&&addresses.none{it.isMain})addresses[0].isMain=true
   screen(if(editId==null)"Nuevo cliente" else "Editar contacto")
-  button("← Volver a clientes"){clients()}
+  button(if(returnToQuote)"← Volver a cotización" else "← Volver a clientes"){
+   if(returnToQuote)newQuote() else clients()
+  }
   heading("Datos del contacto","Consulta DNI o RUC o completa los datos manualmente.")
   label("Número de documento")
   val doc=input("DNI (8) o RUC (11)")
@@ -1470,6 +1472,7 @@ class MainActivity:Activity() {
     put("is_carrier",if(carrier.isChecked)1 else 0)
    }
    var success=false
+   var savedClientId:Long?=null
    try{
     database.beginTransaction()
     val clientId=if(editId==null){
@@ -1488,11 +1491,14 @@ class MainActivity:Activity() {
       put("is_main",if(a.isMain || (index==0 && addresses.none{it.isMain}))1 else 0)
      })
     }
-    database.setTransactionSuccessful();success=true
+    database.setTransactionSuccessful();savedClientId=clientId;success=true
    }catch(e:Exception){
     toast("No se pudo guardar el cliente: "+(e.message?:"Error inesperado"))
    }finally{if(database.inTransaction())database.endTransaction()}
-   if(success){toast(if(editId==null)"Cliente registrado" else "Cliente actualizado");clients()}
+   if(success){
+    toast(if(editId==null)"Cliente registrado" else "Cliente actualizado")
+    if(returnToQuote)newQuote(savedClientId) else clients()
+   }
   }
   button("Configurar consulta RUC / DNI"){rucSettings()}
  }
