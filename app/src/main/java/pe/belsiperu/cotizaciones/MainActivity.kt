@@ -384,15 +384,72 @@ class MainActivity:Activity() {
   c.close()
  }
  private fun clients(){
-  screen("Clientes");button("← Inicio"){home()}
-  val name=input("Nombre o razón social");val doc=input("RUC o DNI");val addr=input("Dirección")
-  button("Guardar cliente"){
-   if(name.text.isBlank())toast("Indica nombre") else {
-    db.writableDatabase.execSQL("INSERT INTO clients(name,document,address) VALUES(?,?,?)",arrayOf(name.text.toString(),doc.text.toString(),addr.text.toString()));clients()
+  screen("Clientes")
+  heading("Nuevo cliente","Consulta el RUC para completar automáticamente la razón social y la dirección.")
+  label("Documento (RUC o DNI)")
+  val doc=input("RUC de 11 dígitos / DNI de 8 dígitos")
+  doc.inputType=InputType.TYPE_CLASS_NUMBER
+  doc.filters=arrayOf(android.text.InputFilter.LengthFilter(11))
+  val status=line("La consulta RUC requiere configurar la conexión una sola vez.",12f,muted)
+  body.addView(status)
+  val name=input("Nombre o razón social")
+  val addr=input("Dirección fiscal / dirección del cliente")
+  button("Consultar RUC"){
+   val ruc=doc.text.toString().trim()
+   if(!ruc.matches(Regex("[0-9]{11}"))){
+    status.text="Ingresa un RUC de 11 dígitos."
+    return@button
+   }
+   status.text="Consultando RUC…"
+   consultaRuc(ruc){data,error->
+    if(data!=null){
+     if(doc.text.toString().trim()!=ruc){
+      status.text="El documento cambió durante la consulta. Vuelve a consultar."
+     }else{
+      name.setText(data.razon)
+      addr.setText(data.direccion)
+      status.text="SUNAT: ${data.estado.ifBlank{"Sin estado"}} · ${data.condicion.ifBlank{"Sin condición"}}. Verifica y guarda los datos."
+      if(data.estado.uppercase(Locale.ROOT)!="ACTIVO"){
+       AlertDialog.Builder(this).setTitle("Estado del contribuyente")
+        .setMessage("El RUC figura como ${data.estado}. Comprueba su situación antes de utilizarlo.")
+        .setPositiveButton("Entendido",null).show()
+      }
+     }
+    }else{
+     status.text=error?:"No se pudo consultar el RUC."
+     if(error?.contains("Configura primero")==true){
+      AlertDialog.Builder(this).setTitle("Activar consulta RUC")
+       .setMessage("Para consultar RUC debes configurar el servicio seguro. Puedes guardar clientes manualmente.")
+       .setNegativeButton("Después",null)
+       .setPositiveButton("Configurar"){_,_->rucSettings()}.show()
+     }
+    }
    }
   }
+  button("Guardar cliente"){
+   val nombre=name.text.toString().trim()
+   val documento=doc.text.toString().trim()
+   val direccion=addr.text.toString().trim()
+   if(nombre.isEmpty()){toast("Indica el nombre o razón social");return@button}
+   if(documento.isNotEmpty() &&
+     !(documento.matches(Regex("[0-9]{8}")) || documento.matches(Regex("[0-9]{11}")))){
+    toast("El DNI requiere 8 dígitos y el RUC 11.");return@button
+   }
+   val values=android.content.ContentValues().apply{
+    put("name",nombre);put("document",documento);put("address",direccion)
+   }
+   val sql=db.writableDatabase
+   val updated=if(documento.isNotEmpty())sql.update("clients",values,"document=?",arrayOf(documento)) else 0
+   if(updated==0)sql.insert("clients",null,values)
+   toast(if(updated>0)"Cliente actualizado" else "Cliente guardado")
+   clients()
+  }
+  button("Configurar consulta de RUC"){rucSettings()}
+  heading("Clientes registrados")
   val c=db.readableDatabase.rawQuery("SELECT name,document,address FROM clients ORDER BY id DESC",null)
-  while(c.moveToNext())label("${c.getString(0)} • ${c.getString(1)}\n${c.getString(2)}")
+  while(c.moveToNext()){
+   info(c.getString(0)?:"Sin nombre", "Documento: ${c.getString(1)?:""}\n${c.getString(2)?:""}")
+  }
   c.close()
  }
  private fun newQuote(){
