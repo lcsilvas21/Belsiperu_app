@@ -40,11 +40,13 @@ jobs:
           packages: 'platform-tools'
       - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
       - name: Compilar APK
         run: gradle assembleDebug --stacktrace
       - name: Guardar APK
         uses: actions/upload-artifact@v4
         with:
-          name: BELSIPERU-V2-APK
+          name: BELSIPERU-V1.17-APK-PRUEBA
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
