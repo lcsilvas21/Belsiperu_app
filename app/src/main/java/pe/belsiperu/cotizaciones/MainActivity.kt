@@ -88,17 +88,22 @@ class MainActivity:Activity() {
  private fun loadQuoteProductBitmap(quoteId:Long):Bitmap?{
   val candidates=mutableListOf<String>()
   var productName=""
+  var productId:Long?=null
   val snapshot=db.readableDatabase.rawQuery(
-   "SELECT product,product_photo FROM quotes WHERE id=?",arrayOf(quoteId.toString()))
+   "SELECT product,product_photo,product_id FROM quotes WHERE id=?",arrayOf(quoteId.toString()))
   try{
    if(snapshot.moveToFirst()){
     productName=snapshot.getString(0)?:""
     val previous=snapshot.getString(1)
+    if(!snapshot.isNull(2))productId=snapshot.getLong(2)
     if(!previous.isNullOrBlank())candidates.add(previous)
    }
   }finally{snapshot.close()}
-  if(productName.isNotBlank()){
-   val catalog=db.readableDatabase.rawQuery(
+  if(productName.isNotBlank()||productId!=null){
+   val catalog=if(productId!=null)
+    db.readableDatabase.rawQuery("SELECT photo_uri FROM products WHERE id=? LIMIT 1",
+      arrayOf(productId.toString()))
+   else db.readableDatabase.rawQuery(
     "SELECT photo_uri FROM products WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(productName))
    try{
     if(catalog.moveToFirst()){
