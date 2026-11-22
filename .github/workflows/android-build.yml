@@ -18,6 +18,7 @@ on:
       - feat/configuracion-empresa-impresion-v1-14
       - fix/pie-pdf-centrado-v1-15
       - feat/disenos-pdf-moderno-corporativo-v1-16
+      - feat/pdf-referencias-fieles-v1-17
   pull_request:
     branches:
       - main
