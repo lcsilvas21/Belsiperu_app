@@ -25,14 +25,17 @@ import org.json.JSONObject
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
-class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,7) {
+class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,8) {
  override fun onCreate(db:SQLiteDatabase) {
   db.execSQL("CREATE TABLE products(id INTEGER PRIMARY KEY AUTOINCREMENT,code TEXT,name TEXT,price REAL,currency TEXT,stock INTEGER,min_stock INTEGER,photo_uri TEXT,kind TEXT NOT NULL DEFAULT 'PRODUCTO',barcode TEXT NOT NULL DEFAULT '',category TEXT NOT NULL DEFAULT '',brand TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT 'UNIDADES',purchase_price REAL NOT NULL DEFAULT 0,sale_includes_igv INTEGER NOT NULL DEFAULT 0,purchase_includes_igv INTEGER NOT NULL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'GRAVADO',isc_type TEXT NOT NULL DEFAULT 'NO APLICA',sunat_code TEXT NOT NULL DEFAULT '',icbper INTEGER NOT NULL DEFAULT 0,sell_without_stock INTEGER NOT NULL DEFAULT 0,weight REAL NOT NULL DEFAULT 0)")
   db.execSQL("CREATE TABLE product_price_variants(id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER NOT NULL,label TEXT NOT NULL,price REAL NOT NULL,FOREIGN KEY(product_id) REFERENCES products(id))")
   db.execSQL("CREATE TABLE clients(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,document TEXT,address TEXT,phone TEXT NOT NULL DEFAULT '',email TEXT NOT NULL DEFAULT '',notes TEXT NOT NULL DEFAULT '',is_supplier INTEGER NOT NULL DEFAULT 0,is_driver INTEGER NOT NULL DEFAULT 0,is_carrier INTEGER NOT NULL DEFAULT 0)")
   db.execSQL("CREATE TABLE client_addresses(id INTEGER PRIMARY KEY AUTOINCREMENT,client_id INTEGER NOT NULL,label TEXT NOT NULL DEFAULT 'Principal',address TEXT NOT NULL,ubigeo TEXT NOT NULL DEFAULT '',is_main INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(client_id) REFERENCES clients(id))")
   db.execSQL("CREATE INDEX idx_client_addresses_client ON client_addresses(client_id)")
-  db.execSQL("CREATE TABLE quotes(id INTEGER PRIMARY KEY AUTOINCREMENT,client TEXT,product TEXT,qty INTEGER,unit_price REAL,discount REAL,igv INTEGER,currency TEXT,total REAL,status TEXT,created TEXT,product_photo TEXT,discount_amount REAL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO',product_id INTEGER,include_product_photo INTEGER NOT NULL DEFAULT 1,client_id INTEGER)")
+  db.execSQL("CREATE TABLE quotes(id INTEGER PRIMARY KEY AUTOINCREMENT,client TEXT,product TEXT,qty INTEGER,unit_price REAL,discount REAL,igv INTEGER,currency TEXT,total REAL,status TEXT,created TEXT,product_photo TEXT,discount_amount REAL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO',product_id INTEGER,include_product_photo INTEGER NOT NULL DEFAULT 1,client_id INTEGER,series TEXT NOT NULL DEFAULT '0002',quote_number INTEGER)")
+  db.execSQL("CREATE TABLE quote_sequences(series TEXT PRIMARY KEY,next_number INTEGER NOT NULL CHECK(next_number>0))")
+  db.execSQL("INSERT INTO quote_sequences(series,next_number) VALUES('0002',1)")
+  db.execSQL("CREATE UNIQUE INDEX idx_quotes_series_number ON quotes(series,quote_number)")
   db.execSQL("CREATE TABLE movements(id INTEGER PRIMARY KEY AUTOINCREMENT,product TEXT,qty INTEGER,reason TEXT,created TEXT)")
   db.execSQL("CREATE TABLE quote_items(id INTEGER PRIMARY KEY AUTOINCREMENT,quote_id INTEGER NOT NULL,product_id INTEGER,code TEXT NOT NULL DEFAULT '',name TEXT NOT NULL,unit TEXT NOT NULL DEFAULT 'UNIDADES',qty INTEGER NOT NULL,unit_price REAL NOT NULL,discount_pct REAL NOT NULL DEFAULT 0,discount_amount REAL NOT NULL DEFAULT 0,igv INTEGER NOT NULL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO',line_total REAL NOT NULL,photo_uri TEXT,include_product_photo INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(quote_id) REFERENCES quotes(id))")
   db.execSQL("CREATE INDEX idx_quote_items_quote ON quote_items(quote_id)")
@@ -91,6 +94,16 @@ class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,7) {
    // Los presupuestos antiguos tenían una sola línea; se conserva su detalle.
    db.execSQL("INSERT INTO quote_items(quote_id,product_id,code,name,unit,qty,unit_price,discount_pct,discount_amount,igv,tax_affectation,line_total,photo_uri,include_product_photo) SELECT q.id,q.product_id,COALESCE((SELECT p.code FROM products p WHERE p.id=q.product_id),''),q.product,'UNIDADES',q.qty,q.unit_price,q.discount,q.discount_amount,q.igv,q.tax_affectation,q.total,q.product_photo,q.include_product_photo FROM quotes q")
   }
+  if(oldVersion<8){
+   // No cambiar retroactivamente los números ya emitidos: los históricos
+   // conservan serie 0002 y el identificador usado antes como correlativo.
+   db.execSQL("ALTER TABLE quotes ADD COLUMN series TEXT NOT NULL DEFAULT '0002'")
+   db.execSQL("ALTER TABLE quotes ADD COLUMN quote_number INTEGER")
+   db.execSQL("UPDATE quotes SET quote_number=id WHERE quote_number IS NULL")
+   db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_quotes_series_number ON quotes(series,quote_number)")
+   db.execSQL("CREATE TABLE IF NOT EXISTS quote_sequences(series TEXT PRIMARY KEY,next_number INTEGER NOT NULL CHECK(next_number>0))")
+   db.execSQL("INSERT OR IGNORE INTO quote_sequences(series,next_number) SELECT '0002',COALESCE(MAX(quote_number),0)+1 FROM quotes WHERE series='0002'")
+  }
  }
 }
 class MainActivity:Activity() {
@@ -134,6 +147,46 @@ class MainActivity:Activity() {
    get("footer","Los productos en stock se entregan dentro de 48 horas, salvo venta previa."),
    prefs.getInt("decimals",2).coerceIn(2,4)
   )
+ }
+ private fun quoteDisplayNumber(id:Long):String{
+  val cursor=db.readableDatabase.rawQuery(
+   "SELECT series,quote_number FROM quotes WHERE id=?",arrayOf(id.toString()))
+  try{
+   if(cursor.moveToFirst()){
+    val serie=cursor.getString(0)?:"0002"
+    val number=if(cursor.isNull(1))id else cursor.getLong(1)
+    return serie+"-"+number.toString().padStart(7,'0')
+   }
+  }finally{cursor.close()}
+  return "0002-"+id.toString().padStart(7,'0')
+ }
+ private fun activeQuoteSequence():Pair<String,Long>{
+  val prefs=getSharedPreferences("quote_sequence",MODE_PRIVATE)
+  val serie=prefs.getString("active_series","0002")?:"0002"
+  val cursor=db.readableDatabase.rawQuery(
+   "SELECT next_number FROM quote_sequences WHERE series=?",arrayOf(serie))
+  try{if(cursor.moveToFirst())return Pair(serie,cursor.getLong(0))}
+  finally{cursor.close()}
+  return Pair(serie,1L)
+ }
+ private fun assignNextQuoteSequence(database:SQLiteDatabase):Pair<String,Long>{
+  // Se llama DENTRO de la misma transacción que registra la cotización.
+  val serie=getSharedPreferences("quote_sequence",MODE_PRIVATE)
+   .getString("active_series","0002")?:"0002"
+  val cursor=database.rawQuery(
+   "SELECT next_number FROM quote_sequences WHERE series=?",arrayOf(serie))
+  val configured=try{if(cursor.moveToFirst())cursor.getLong(0) else 1L}
+   finally{cursor.close()}
+  val latest=database.rawQuery(
+   "SELECT COALESCE(MAX(quote_number),0) FROM quotes WHERE series=?",arrayOf(serie))
+  val max=try{if(latest.moveToFirst())latest.getLong(0) else 0L}
+   finally{latest.close()}
+  val current=maxOf(configured,max+1L)
+  if(current>9999999L)throw IllegalStateException("Se agotó el correlativo de la serie.")
+  database.execSQL(
+   "INSERT OR REPLACE INTO quote_sequences(series,next_number) VALUES(?,?)",
+   arrayOf(serie,current+1L))
+  return Pair(serie,current)
  }
  private fun pdfNumber(value:Double,decimals:Int=companyInfo().decimals)=
   String.format(Locale.US,"%,."+decimals+"f",value)
