@@ -21,6 +21,8 @@ import kotlin.math.roundToInt
 import java.net.HttpURLConnection
 import java.net.URL
 import org.json.JSONObject
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
 class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,5) {
  override fun onCreate(db:SQLiteDatabase) {
@@ -292,6 +294,31 @@ class MainActivity:Activity() {
   val s=Spinner(this);s.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,items);body.addView(s);return s
  }
  private fun toast(t:String)=Toast.makeText(this,t,Toast.LENGTH_LONG).show()
+
+ // Google Code Scanner muestra la cámara y reconoce códigos sin pedir
+ // permiso CAMERA a la app. El módulo puede descargarse la primera vez.
+ private fun scanBarcode(target:EditText){
+  val options=GmsBarcodeScannerOptions.Builder()
+   .enableAutoZoom()
+   .build()
+  GmsBarcodeScanning.getClient(this,options).startScan()
+   .addOnSuccessListener{scanned->
+    val value=scanned.rawValue?.trim().orEmpty()
+    if(value.isEmpty()){
+     toast("No se pudo leer un código. Intenta de nuevo.")
+    }else{
+     target.setText(value)
+     target.setSelection(value.length)
+     toast("Código de barras leído correctamente")
+    }
+   }
+   .addOnCanceledListener{
+    // Conservar el valor que hubiera escrito el usuario.
+   }
+   .addOnFailureListener{
+    toast("No se pudo abrir el escáner. Verifica Google Play Services e inténtalo con conexión la primera vez.")
+   }
+ }
  private fun lock(){
   screen("Acceso seguro")
   label("Versión inicial: PIN local. La autenticación biométrica y el cifrado se incorporarán en una versión posterior.")
@@ -674,8 +701,40 @@ class MainActivity:Activity() {
     code.setText("BLP"+nextId.toString().padStart(6,'0'))
    }else code.setText(previous("code"))
    label("Código de barras")
-   barcode=input("Opcional; ingresar el código impreso")
-   barcode.setText(previous("barcode"))
+   val barcodeRow=LinearLayout(this@MainActivity).apply{
+    orientation=LinearLayout.HORIZONTAL
+    gravity=Gravity.CENTER_VERTICAL
+   }
+   barcode=EditText(this@MainActivity).apply{
+    hint="Opcional; ingresar el código impreso"
+    setSingleLine(true)
+    textSize=15f
+    setTextColor(ink)
+    setHintTextColor(muted)
+    setPadding(d(13),d(9),d(13),d(9))
+    background=round(Color.WHITE,12,border)
+    inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+    minHeight=d(50)
+    setText(previous("barcode"))
+   }
+   barcodeRow.addView(barcode,LinearLayout.LayoutParams(0,d(50),1f))
+   val scanButton=ImageView(this@MainActivity).apply{
+    setImageResource(android.R.drawable.ic_menu_camera)
+    setColorFilter(Color.WHITE)
+    setPadding(d(14),d(12),d(14),d(12))
+    background=round(green,12)
+    contentDescription="Escanear código de barras con la cámara"
+    isClickable=true
+    isFocusable=true
+    setOnClickListener{scanBarcode(barcode)}
+   }
+   barcodeRow.addView(scanButton,LinearLayout.LayoutParams(d(56),d(50)).apply{
+    setMargins(d(8),0,0,0)
+   })
+   body.addView(barcodeRow,LinearLayout.LayoutParams(-1,-2).apply{
+    setMargins(0,d(3),0,d(7))
+   })
+   body.addView(line("Toca la cámara para escanear, o escribe el código manualmente.",12f,muted))
    label("Categoría")
    category=suggestionField("Escribe o elige una categoría",catalogSuggestions("category"))
    category.setText(previous("category"))
