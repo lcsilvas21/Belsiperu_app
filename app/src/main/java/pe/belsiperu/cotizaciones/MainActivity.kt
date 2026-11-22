@@ -1085,7 +1085,7 @@ class MainActivity:Activity() {
  private fun clients(){
   screen("Clientes")
   heading("Clientes registrados","Consulta, edita y administra tu agenda de clientes.")
-  button("＋ Nuevo cliente"){clientEditor()}
+  button("＋ Nuevo cliente"){manualNewClient()}
   label("Buscar cliente")
   val search=input("Nombre, RUC, DNI, teléfono o correo")
   val list=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
@@ -1197,6 +1197,152 @@ class MainActivity:Activity() {
   button("← Volver a clientes"){clients()}
  }
 
+
+ // Registro rápido sin depender de SUNAT ni de endpoint.pe.
+ // Los tres datos obligatorios corresponden a DOCUMENTO, CLIENTE y DIRECCIÓN
+ // que se imprimen en el modelo de proforma BELSIPERU.
+ private fun manualNewClient(returnToQuote:Boolean=false){
+  screen("Nuevo cliente")
+  button(if(returnToQuote)"← Volver a cotización" else "← Volver a clientes"){
+   if(returnToQuote)newQuote() else clients()
+  }
+  heading("Registro manual de cliente",
+   "Completa los datos marcados con * y guarda el contacto. No es obligatorio consultar DNI o RUC.")
+  label("DNI o RUC *")
+  val doc=input("Ingresa 8 dígitos para DNI u 11 para RUC")
+  doc.inputType=InputType.TYPE_CLASS_NUMBER
+  doc.filters=arrayOf(android.text.InputFilter.LengthFilter(11))
+  val status=line("Puedes ingresar el documento manualmente y guardar sin consultar.",12f,muted)
+  body.addView(status)
+  doc.addTextChangedListener(object:TextWatcher{
+   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){
+    val value=s?.toString()?.trim().orEmpty()
+    status.text=when{
+     value.matches(Regex("[0-9]{8}"))->"DNI detectado (8 dígitos). Puedes guardar o consultar."
+     value.matches(Regex("[0-9]{11}"))->"RUC detectado (11 dígitos). Puedes guardar o consultar."
+     value.isBlank()->"Ingresa un DNI o un RUC."
+     else->"Documento incompleto. DNI: 8 dígitos · RUC: 11 dígitos."
+    }
+   }
+   override fun afterTextChanged(s:Editable?){}
+  })
+  label("Nombres y apellidos / Razón social *")
+  val name=input("Nombre completo o razón social")
+  label("Dirección principal para la proforma *")
+  val address=input("Calle, número, urbanización, distrito, provincia")
+  address.setSingleLine(false)
+  address.minLines=2
+  address.inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+   InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+  button("Consultar DNI / RUC (opcional)"){
+   val document=doc.text.toString().trim()
+   when{
+    document.matches(Regex("[0-9]{8}"))->{
+     status.text="Consultando DNI…"
+     consultaDni(document){data,error->
+      if(doc.text.toString().trim()!=document){
+       status.text="El documento cambió. Vuelve a consultar."
+      }else if(data!=null){
+       name.setText(data.nombre)
+       status.text="DNI consultado. Completa manualmente la dirección principal."
+      }else status.text=(error?:"No se pudo consultar el DNI.")+
+       " Puedes guardar los datos manualmente."
+     }
+    }
+    document.matches(Regex("[0-9]{11}"))->{
+     status.text="Consultando RUC…"
+     consultaRuc(document){data,error->
+      if(doc.text.toString().trim()!=document){
+       status.text="El documento cambió. Vuelve a consultar."
+      }else if(data!=null){
+       name.setText(data.razon)
+       if(address.text.toString().isBlank())address.setText(data.direccion)
+       status.text="RUC consultado. Revisa los datos antes de guardar."
+      }else status.text=(error?:"No se pudo consultar el RUC.")+
+       " Puedes guardar los datos manualmente."
+     }
+    }
+    else->{doc.error="Ingresa un DNI de 8 dígitos o un RUC de 11 dígitos."}
+   }
+  }
+  heading("Datos de contacto","Estos campos son opcionales y no impiden generar una proforma.")
+  label("Teléfono")
+  val phone=input("Celular o teléfono")
+  phone.inputType=InputType.TYPE_CLASS_PHONE
+  label("Correo electrónico")
+  val email=input("cliente@correo.com")
+  email.inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+  label("Observaciones")
+  val notes=EditText(this).apply{
+   hint="Referencia de entrega u otras observaciones (opcional)"
+   textSize=15f;setTextColor(ink);setHintTextColor(muted)
+   setPadding(d(13),d(12),d(13),d(12))
+   inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+    InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+   setSingleLine(false);minLines=3;gravity=Gravity.TOP
+   background=round(Color.WHITE,12,border)
+  }
+  body.addView(notes,LinearLayout.LayoutParams(-1,d(112)).apply{
+   setMargins(0,d(4),0,d(8))
+  })
+  button("✓ Guardar cliente manualmente"){
+   val documento=doc.text.toString().trim()
+   val nombre=name.text.toString().trim()
+   val direccion=address.text.toString().trim()
+   val correo=email.text.toString().trim()
+   if(!documento.matches(Regex("[0-9]{8}|[0-9]{11}"))){
+    doc.error="El DNI debe tener 8 dígitos o el RUC 11."
+    doc.requestFocus();toast("Ingresa un DNI o RUC válido.");return@button
+   }
+   if(nombre.isBlank()){
+    name.error="Este nombre es obligatorio para el PDF."
+    name.requestFocus();toast("Ingresa el nombre o razón social.");return@button
+   }
+   if(direccion.isBlank()){
+    address.error="La dirección principal es obligatoria para la proforma."
+    address.requestFocus();toast("Ingresa la dirección principal.");return@button
+   }
+   if(correo.isNotBlank()&&!android.util.Patterns.EMAIL_ADDRESS.matcher(correo).matches()){
+    email.error="Revisa el correo electrónico.";email.requestFocus();return@button
+   }
+   val database=db.writableDatabase
+   val existing=database.rawQuery("SELECT id FROM clients WHERE document=? LIMIT 1",
+    arrayOf(documento))
+   val existingId=try{if(existing.moveToFirst())existing.getLong(0) else null}
+    finally{existing.close()}
+   if(existingId!=null){
+    AlertDialog.Builder(this).setTitle("El cliente ya existe")
+     .setMessage("Ese DNI o RUC ya está registrado. Abre su ficha para editarlo, en lugar de crear un duplicado.")
+     .setNegativeButton("Cancelar",null)
+     .setPositiveButton("Editar cliente"){_,_->clientEditor(existingId,returnToQuote)}
+     .show()
+    return@button
+   }
+   val values=android.content.ContentValues().apply{
+    put("name",nombre);put("document",documento);put("address",direccion)
+    put("phone",phone.text.toString().trim());put("email",correo)
+    put("notes",notes.text.toString().trim())
+   }
+   var savedClientId:Long?=null
+   try{
+    database.beginTransaction()
+    val id=database.insertOrThrow("clients",null,values)
+    database.insertOrThrow("client_addresses",null,android.content.ContentValues().apply{
+     put("client_id",id);put("label","Principal")
+     put("address",direccion);put("ubigeo","");put("is_main",1)
+    })
+    database.setTransactionSuccessful()
+    savedClientId=id
+   }catch(e:Exception){toast("No se pudo guardar el cliente: "+(e.message?:"Error"))}
+   finally{if(database.inTransaction())database.endTransaction()}
+   if(savedClientId!=null){
+    toast("Cliente guardado correctamente. Disponible para cotizaciones.")
+    if(returnToQuote)newQuote(savedClientId) else clients()
+   }
+  }
+  label("Más direcciones, ubigeo y clasificación: abre Editar después de guardar al cliente.")
+ }
  private fun clientEditor(editId:Long?=null,returnToQuote:Boolean=false){
   val saved=mutableMapOf<String,String>()
   if(editId!=null){
@@ -1228,7 +1374,7 @@ class MainActivity:Activity() {
   button(if(returnToQuote)"← Volver a cotización" else "← Volver a clientes"){
    if(returnToQuote)newQuote() else clients()
   }
-  heading("Datos del contacto","Consulta DNI o RUC o completa los datos manualmente.")
+  heading("Datos del contacto","Puedes escribir los datos sin usar la consulta DNI/RUC. El documento, el nombre y la dirección son necesarios para la proforma.")
   label("Número de documento")
   val doc=input("DNI (8) o RUC (11)")
   doc.inputType=InputType.TYPE_CLASS_NUMBER
@@ -1238,6 +1384,13 @@ class MainActivity:Activity() {
   label("Nombre o razón social *")
   val name=input("Nombre o razón social")
   name.setText(previous("name"))
+  label("Dirección principal para la proforma *")
+  val mainAddress=input("Dirección completa de entrega o fiscal")
+  mainAddress.setSingleLine(false)
+  mainAddress.minLines=2
+  mainAddress.inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+   InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+  mainAddress.setText(addresses.firstOrNull{it.isMain}?.address?:previous("address"))
   label("Correo electrónico")
   val email=input("nombre@correo.com")
   email.inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
@@ -1416,7 +1569,10 @@ class MainActivity:Activity() {
          applied=true
         }
        }
-       if(applied)redrawAddresses()
+       if(applied){
+        mainAddress.setText(addresses.firstOrNull{it.isMain}?.address?:data.direccion)
+        redrawAddresses()
+       }
        status.text="RUC consultado: "+data.estado.ifBlank{"Sin estado"}+
         " · "+data.condicion.ifBlank{"Sin condición"}+
         (if(applied)". Dirección principal agregada." else ". Dirección existente conservada.")
@@ -1448,9 +1604,20 @@ class MainActivity:Activity() {
    val documento=doc.text.toString().trim()
    val correo=email.text.toString().trim()
    if(nombre.isBlank()){toast("Ingresa el nombre o razón social.");return@button}
-   if(documento.isNotBlank() &&
-    !documento.matches(Regex("[0-9]{8}|[0-9]{11}"))){
-    toast("El DNI debe tener 8 dígitos y el RUC 11.");return@button
+   if(!documento.matches(Regex("[0-9]{8}|[0-9]{11}"))){
+    doc.error="El DNI necesita 8 dígitos o el RUC 11."
+    toast("Ingresa un DNI o RUC para la proforma.");return@button
+   }
+   val principal=mainAddress.text.toString().trim()
+   if(principal.isBlank()){
+    mainAddress.error="La dirección principal es necesaria para el PDF."
+    toast("Ingresa la dirección principal del cliente.");return@button
+   }
+   val mainIndex=addresses.indexOfFirst{it.isMain}
+   if(mainIndex>=0)addresses[mainIndex].address=principal
+   else{
+    addresses.forEach{it.isMain=false}
+    addresses.add(0,ClientAddress(null,"Principal",principal,"",true))
    }
    if(correo.isNotBlank() && !android.util.Patterns.EMAIL_ADDRESS.matcher(correo).matches()){
     email.error="Revisa el correo electrónico";return@button
@@ -1598,7 +1765,7 @@ class MainActivity:Activity() {
    }
   }
   renderClientResults()
-  button("＋ Registrar cliente nuevo"){clientEditor(returnToQuote=true)}
+  button("＋ Registrar cliente nuevo"){manualNewClient(returnToQuote=true)}
 
   heading("Productos de la cotización","Busca por nombre, código, marca o código de barras y agrégalos a la proforma.")
   label("Moneda de la cotización")
@@ -1804,10 +1971,24 @@ class MainActivity:Activity() {
    val rate=currentRate();val target=targetCurrency()
    if(rate<=0.0||!rate.isFinite()){toast("Indica un tipo de cambio válido.");return@button}
    val customer=db.readableDatabase.rawQuery(
-    "SELECT name FROM clients WHERE id=?",arrayOf(clientId.toString()))
-   val customerName=try{if(customer.moveToFirst())customer.getString(0) else null}
-    finally{customer.close()}
+    "SELECT name,document,address FROM clients WHERE id=?",arrayOf(clientId.toString()))
+   var customerName:String?=null
+   var customerDoc=""
+   var customerAddress=""
+   try{if(customer.moveToFirst()){
+    customerName=customer.getString(0)
+    customerDoc=customer.getString(1)?:""
+    customerAddress=customer.getString(2)?:""
+   }}finally{customer.close()}
    if(customerName.isNullOrBlank()){toast("El cliente ya no está registrado.");return@button}
+   if(!customerDoc.matches(Regex("[0-9]{8}|[0-9]{11}")) || customerAddress.isBlank()){
+    AlertDialog.Builder(this).setTitle("Completa los datos para el PDF")
+     .setMessage("Este cliente necesita DNI o RUC válido y dirección principal. Puedes corregirlo manualmente antes de generar la cotización.")
+     .setNegativeButton("Después",null)
+     .setPositiveButton("Editar cliente"){_,_->clientEditor(clientId,returnToQuote=true)}
+     .show()
+    return@button
+   }
    val calculated=picked.map{quoteLineNumbers(it,target,rate)}
    val total=calculated.sumOf{it.second}
    if(!total.isFinite()||total<0){toast("Revisa las cantidades y los descuentos.");return@button}

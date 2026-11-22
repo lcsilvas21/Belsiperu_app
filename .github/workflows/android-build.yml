@@ -11,6 +11,7 @@ on:
       - feat/identificacion-automatica-ruc-dni
       - feat/clientes-edicion-direcciones-v1-8
       - feat/cotizacion-clientes-productos-v1-9
+      - fix/registro-manual-clientes-pdf-v1-10
   pull_request:
     branches:
       - main
