@@ -1608,6 +1608,7 @@ class MainActivity:Activity() {
   fx.setText("3.75")
   label("Buscar producto registrado")
   val productSearch=input("Nombre, código, código de barras o marca")
+  button("📷 Escanear código de barras"){scanBarcode(productSearch)}
   val catalog=mutableListOf<CatalogQuoteProduct>()
   val productCursor=db.readableDatabase.rawQuery(
    "SELECT id,code,name,price,currency,sale_includes_igv,tax_affectation,photo_uri,kind,unit,barcode,brand,category,stock FROM products ORDER BY name COLLATE NOCASE",
