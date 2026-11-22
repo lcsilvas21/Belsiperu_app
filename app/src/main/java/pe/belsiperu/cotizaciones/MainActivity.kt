@@ -111,6 +111,125 @@ class MainActivity:Activity() {
  private var pdfExpiry=""
  private var pdfSeller="BELSIPERU"
  private var pdfPayment="CONTADO"
+ private var companyLogoPreview:ImageView?=null
+ private fun companyPrefs()=getSharedPreferences("belsiperu_company_pdf",MODE_PRIVATE)
+ private data class CompanyPdfInfo(
+  val ruc:String,val legal:String,val commercial:String,val fiscal:String,
+  val business:String,val regime:String,val header:String,val banks:String,
+  val footer:String,val decimals:Int
+ )
+ private fun companyInfo():CompanyPdfInfo{
+  val prefs=companyPrefs()
+  fun get(key:String,otherwise:String="")=prefs.getString(key,otherwise)?:otherwise
+  return CompanyPdfInfo(
+   get("ruc","20605060634"),
+   get("legal","BELSIPERU S.A.C."),
+   get("commercial","BELSIPERU"),
+   get("fiscal",""),
+   get("business","Maquinaria y equipos industriales"),
+   get("regime","Régimen MYPE Tributario"),
+   get("header","LO MEJOR EN MÁQUINAS Y HERRAMIENTAS INDUSTRIALES PARA EL PERÚ"),
+   get("banks",""),
+   get("footer","Los productos en stock se entregan dentro de 48 horas, salvo venta previa."),
+   prefs.getInt("decimals",2).coerceIn(2,4)
+  )
+ }
+ private fun pdfNumber(value:Double,decimals:Int=companyInfo().decimals)=
+  String.format(Locale.US,"%,."+decimals+"f",value)
+ private fun companyLogoFile()=java.io.File(filesDir,"company_pdf_logo.png")
+ private fun loadCompanyLogoBitmap():Bitmap?{
+  val file=companyLogoFile()
+  try{
+   if(file.isFile){
+    val bmp=BitmapFactory.decodeFile(file.absolutePath)
+    if(bmp!=null)return bmp
+   }
+  }catch(_:Exception){}catch(_:OutOfMemoryError){}
+  return try{assets.open("belsiperu_logo.png").use{BitmapFactory.decodeStream(it)}}
+   catch(_:Exception){null}catch(_:OutOfMemoryError){null}
+ }
+ private fun drawCompanyLogo(canvas:Canvas,rect:RectF){
+  val bmp=loadCompanyLogoBitmap()?:return
+  try{drawProductImage(canvas,bmp,rect)}finally{bmp.recycle()}
+ }
+ private fun pdfTextLines(content:String,maxWidth:Float,size:Float,limit:Int=16):List<String>{
+  if(content.isBlank())return emptyList()
+  val p=Paint(Paint.ANTI_ALIAS_FLAG).apply{textSize=size;typeface=Typeface.DEFAULT}
+  val result=mutableListOf<String>()
+  for(part in content.replace("\r","").split("\n")){
+   if(part.isBlank()){if(result.size<limit)result.add("");continue}
+   var current=""
+   for(word in part.trim().split(Regex("\\s+"))){
+    if(word.isEmpty())continue
+    val attempt=if(current.isEmpty())word else current+" "+word
+    if(current.isNotEmpty()&&p.measureText(attempt)>maxWidth){
+     result.add(current);current=""
+    }
+    if(p.measureText(word)>maxWidth){
+     var remaining=word
+     while(remaining.isNotEmpty()){
+      var i=1
+      while(i<remaining.length&&p.measureText(remaining.take(i+1))<=maxWidth)i++
+      result.add(remaining.take(i))
+      remaining=remaining.drop(i)
+      if(result.size>=limit)return result
+     }
+    }else current=if(current.isEmpty())word else current+" "+word
+    if(result.size>=limit)return result
+   }
+   if(current.isNotEmpty())result.add(current)
+   if(result.size>=limit)return result
+  }
+  return result.take(limit)
+ }
+ private fun addBankContinuationPages(pdf:android.graphics.pdf.PdfDocument,
+  remaining:List<String>,pageW:Int,pageH:Int,fromPage:Int=2){
+  if(remaining.isEmpty())return
+  val isTicket=pageW<300
+  val margin=if(isTicket)12f else 28f
+  val pointSize=if(isTicket)7f else 9f
+  val step=if(isTicket)12f else 15f
+  val available=pageW.toFloat()-margin*2
+  val text=Paint(Paint.ANTI_ALIAS_FLAG).apply{
+   color=Color.BLACK;textSize=pointSize
+  }
+  var idx=0;var pageNumber=fromPage
+  while(idx<remaining.size){
+   val page=pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(
+    pageW,pageH,pageNumber++).create())
+   val canvas=page.canvas
+   text.typeface=Typeface.DEFAULT_BOLD;text.textSize=if(isTicket)10f else 15f
+   canvas.drawText("CUENTAS BANCARIAS · CONTINUACIÓN",margin,42f,text)
+   text.typeface=Typeface.DEFAULT;text.textSize=pointSize
+   var y=68f
+   while(idx<remaining.size&&y<pageH-65f){
+    val value=remaining[idx++]
+    // Los datos se imprimen exactamente como fueron ingresados; no se inventan bancos.
+    val safe=pdfTextLines(value,available,pointSize,30)
+    for(line in safe){
+     if(y>=pageH-65f){idx--;break}
+     canvas.drawText(line,margin,y,text);y+=step
+    }
+   }
+   text.typeface=Typeface.DEFAULT;text.textSize=if(isTicket)6f else 8f
+   canvas.drawText("Documento comercial - no es comprobante tributario.",margin,
+    pageH-20f,text)
+   pdf.finishPage(page)
+  }
+ }
+ private fun settingTextArea(title:String,value:String,lines:Int=4):EditText{
+  label(title)
+  val e=EditText(this).apply{
+   textSize=15f;setTextColor(ink);setHintTextColor(muted)
+   setPadding(d(12),d(12),d(12),d(12))
+   setSingleLine(false);minLines=lines;maxLines=12;gravity=Gravity.TOP
+   inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+   background=round(Color.WHITE,12,border)
+   setText(value)
+  }
+  body.addView(e,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(4),0,d(8))})
+  return e
+ }
  private fun today()=SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.getDefault()).format(Date())
 
  // Carga la foto del catálogo más reciente; para cotizaciones antiguas usa
@@ -422,11 +541,112 @@ class MainActivity:Activity() {
  }
  private fun settings(){
   screen("Configuración")
-  heading("BELSIPERU V2","Diseño marino, verde y dorado")
-  info("Protección del PIN","El PIN actual es de prototipo: no guardes información sensible ni real hasta reforzar la seguridad.",Color.rgb(169,105,19))
+  heading("Datos de la empresa e impresión",
+   "Personaliza el encabezado, el logotipo y la información comercial de las proformas PDF.")
+  button("🏢 Empresa · Datos para el encabezado"){companySettings()}
+  button("🖨 Impresión · Bancos, cabecera y pie de página"){printingSettings()}
+  heading("Otros ajustes")
   button("Configurar consulta RUC / DNI"){rucSettings()}
+  info("Protección de datos","Mantén protegidas tus claves y haz copias de seguridad del catálogo. Esta APK de prueba guarda su configuración en el dispositivo.",Color.rgb(169,105,19))
   button("Bloquear aplicación"){lock()}
   button("Volver al inicio"){home()}
+ }
+ private fun companySettings(){
+  screen("Configuración · Empresa")
+  button("← Volver a Configuración"){settings()}
+  heading("Información de la empresa",
+   "Estos datos se mostrarán en el encabezado de tus próximas proformas PDF.")
+  val previous=companyInfo()
+  label("Logotipo de la empresa")
+  val preview=ImageView(this).apply{
+   scaleType=ImageView.ScaleType.FIT_CENTER
+   background=round(Color.WHITE,14,border)
+   setPadding(d(10),d(10),d(10),d(10))
+  }
+  companyLogoPreview=preview
+  loadCompanyLogoBitmap()?.let{preview.setImageBitmap(it)}
+  body.addView(preview,LinearLayout.LayoutParams(-1,d(145)).apply{
+   setMargins(0,d(6),0,d(4))
+  })
+  info("Medidas recomendadas para el logotipo",
+   "Formato PNG con fondo transparente, idealmente 1200 × 600 píxeles (relación 2:1), hasta 3 MB. Se adapta sin deformarse al encabezado del PDF.")
+  button("Seleccionar logotipo desde el teléfono"){
+   val intent=Intent(Intent.ACTION_OPEN_DOCUMENT).apply{
+    addCategory(Intent.CATEGORY_OPENABLE)
+    type="image/*"
+   }
+   startActivityForResult(intent,94)
+  }
+  button("Usar logotipo predeterminado"){
+   companyLogoFile().delete()
+   companyLogoPreview?.let{view->
+    loadCompanyLogoBitmap()?.let{view.setImageBitmap(it)}
+   }
+   toast("Se utilizará el logotipo original.")
+  }
+  label("RUC de la empresa *")
+  val ruc=input("11 dígitos")
+  ruc.inputType=InputType.TYPE_CLASS_NUMBER
+  ruc.filters=arrayOf(android.text.InputFilter.LengthFilter(11))
+  ruc.setText(previous.ruc)
+  label("Razón social *")
+  val legal=input("Nombre legal de la empresa")
+  legal.setText(previous.legal)
+  label("Nombre comercial")
+  val commercial=input("Marca o nombre comercial")
+  commercial.setText(previous.commercial)
+  val fiscal=settingTextArea("Dirección fiscal *",previous.fiscal,3)
+  label("Rubro del negocio")
+  val business=input("Actividad comercial")
+  business.setText(previous.business)
+  label("Régimen tributario")
+  val regime=input("Régimen de la empresa")
+  regime.setText(previous.regime)
+  button("✓ Guardar información de empresa"){
+   val tax=ruc.text.toString().trim()
+   val name=legal.text.toString().trim()
+   val addr=fiscal.text.toString().trim()
+   if(!tax.matches(Regex("[0-9]{11}"))){
+    ruc.error="El RUC requiere 11 dígitos.";ruc.requestFocus();return@button
+   }
+   if(name.isBlank()){legal.error="Ingresa la razón social";legal.requestFocus();return@button}
+   if(addr.isBlank()){fiscal.error="Ingresa la dirección fiscal";fiscal.requestFocus();return@button}
+   val ok=companyPrefs().edit()
+    .putString("ruc",tax).putString("legal",name)
+    .putString("commercial",commercial.text.toString().trim())
+    .putString("fiscal",addr)
+    .putString("business",business.text.toString().trim())
+    .putString("regime",regime.text.toString().trim())
+    .commit()
+   if(ok){toast("Datos de empresa guardados para los PDF");settings()}
+   else toast("No se pudo guardar la configuración.")
+  }
+ }
+ private fun printingSettings(){
+  screen("Configuración · Impresión")
+  button("← Volver a Configuración"){settings()}
+  heading("Configuración básica",
+   "Personaliza el texto de las proformas; puedes modificarlo sin consultar SUNAT.")
+  val old=companyInfo()
+  label("Número máximo de decimales")
+  val decimals=choice(listOf("2 decimales","3 decimales","4 decimales"))
+  decimals.setSelection(old.decimals-2)
+  val header=settingTextArea("Información de cabecera",old.header,3)
+  info("Consejo","La cabecera puede incluir un lema o descripción breve de la actividad comercial.")
+  val banks=settingTextArea("Cuentas bancarias (todas las cuentas corrientes y CCI)",old.banks,7)
+  info("Cómo ingresar las cuentas",
+   "Escribe una cuenta por línea: Banco | Moneda | Cuenta corriente | CCI. Puedes añadir tantas líneas como necesites. No ingreses contraseñas, tarjetas ni claves bancarias.")
+  val footer=settingTextArea("Información del pie de página",old.footer,4)
+  button("✓ Guardar configuración de impresión"){
+   val ok=companyPrefs().edit()
+    .putInt("decimals",decimals.selectedItemPosition+2)
+    .putString("header",header.text.toString().trim())
+    .putString("banks",banks.text.toString().trim())
+    .putString("footer",footer.text.toString().trim())
+    .commit()
+   if(ok){toast("Impresión configurada. Se aplicará a los nuevos PDF.");settings()}
+   else toast("No se pudieron guardar los ajustes de impresión.")
+  }
  }
  private fun rucSettings(){
   screen("Consulta de RUC")
@@ -2324,6 +2544,35 @@ class MainActivity:Activity() {
  @Deprecated("Legacy activity result used for minimal SDK example")
  override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){
   super.onActivityResult(requestCode,resultCode,data)
+  if(requestCode==94 && resultCode==RESULT_OK && data?.data!=null){
+   try{
+    val uri=data.data!!
+    val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+    contentResolver.openInputStream(uri)?.use{BitmapFactory.decodeStream(it,null,bounds)}
+    if(bounds.outWidth<=0||bounds.outHeight<=0||
+       bounds.outWidth>18000||bounds.outHeight>18000)
+     throw IllegalArgumentException("La imagen no es válida o tiene dimensiones excesivas.")
+    var sample=1
+    while(bounds.outWidth/sample>1400||bounds.outHeight/sample>1400)sample*=2
+    val bmp=contentResolver.openInputStream(uri)?.use{
+     BitmapFactory.decodeStream(it,null,BitmapFactory.Options().apply{inSampleSize=sample})
+    }?:throw IllegalArgumentException("No fue posible leer la imagen.")
+    val tmp=java.io.File(filesDir,"company_pdf_logo.tmp")
+    try{
+     val written=tmp.outputStream().use{bmp.compress(Bitmap.CompressFormat.PNG,100,it)}
+     if(!written)throw IllegalStateException("No se pudo guardar el logotipo.")
+     if(tmp.length()>3L*1024*1024)throw IllegalArgumentException(
+      "El logotipo procesado supera 3 MB. Elige uno más ligero.")
+     val target=companyLogoFile()
+     if(!tmp.renameTo(target)){
+      tmp.copyTo(target,overwrite=true);tmp.delete()
+     }
+     companyLogoPreview?.setImageBitmap(bmp)
+     toast("Logotipo guardado para la cabecera del PDF.")
+    }finally{tmp.delete()}
+   }catch(e:Exception){toast("No se pudo cargar el logo: "+(e.message?:"Archivo no válido"))}
+    catch(_:OutOfMemoryError){toast("La imagen es demasiado grande; usa un PNG más pequeño.")}
+  }
   if(requestCode==93 && resultCode==RESULT_OK && data?.data!=null){
    val uri=data.data!!
    try{
@@ -2363,6 +2612,7 @@ class MainActivity:Activity() {
   val photoUri:String?,val includePhoto:Boolean
  )
  private fun writePdfMultiple(id:Long,out:java.io.OutputStream){
+  val company=companyInfo()
   val dbRead=db.readableDatabase
   val header=dbRead.rawQuery(
    "SELECT client,client_id,currency,total,created FROM quotes WHERE id=?",
@@ -2410,7 +2660,7 @@ class MainActivity:Activity() {
   val paint=Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
   val currencyMark=if(currency=="USD")"US$" else "S/"
   val labelColor=Color.rgb(18,52,90)
-  fun fmt(value:Double)=String.format(Locale.US,"%,.2f",value)
+  fun fmt(value:Double)=pdfNumber(value,company.decimals)
   fun font(size:Float,bold:Boolean=false,color:Int=Color.BLACK){
    paint.style=Paint.Style.FILL;paint.color=color;paint.textSize=size
    paint.typeface=Typeface.create(Typeface.DEFAULT,if(bold)Typeface.BOLD else Typeface.NORMAL)
@@ -2440,21 +2690,13 @@ class MainActivity:Activity() {
   fun rule(y:Float){fillRect(margin,y,width-margin,y+0.7f,Color.LTGRAY)}
   fun drawHeader():Float{
    val top=if(ticket)11f else 16f
-   if(!ticket){
-    try{
-     assets.open("belsiperu_logo.png").use{
-      val bitmap=BitmapFactory.decodeStream(it)
-      if(bitmap!=null){
-       drawProductImage(canvas,bitmap,RectF(margin,top,margin+73f,top+57f))
-       bitmap.recycle()
-      }
-     }
-    }catch(_:Exception){}
-   }
+   if(!ticket)drawCompanyLogo(canvas,RectF(margin,top,margin+73f,top+57f))
    val titleX=if(ticket)margin else margin+83f
-   text("BELSIPERU S.A.C.",titleX,top+17f,if(ticket)13f else 17f,true,labelColor)
-   text("RUC 20605060634",titleX,top+34f,if(ticket)9f else 10f)
-   text("PROFORMA 0002-"+id.toString().padStart(7,'0'),titleX,top+50f,if(ticket)9f else 11f,true)
+   fitted(company.legal,titleX,top+17f,width-titleX-margin,if(ticket)12f else 15f,true)
+   text("RUC "+company.ruc,titleX,top+34f,if(ticket)9f else 10f)
+   if(company.fiscal.isNotBlank())
+    fitted(company.fiscal,titleX,top+43f,width-titleX-margin,7f)
+   text("PROFORMA 0002-"+id.toString().padStart(7,'0'),titleX,top+55f,if(ticket)9f else 11f,true)
    rule(top+65f)
    fitted("CLIENTE: "+client,margin,top+82f,contentWidth,if(ticket)8f else 9f,true)
    text("DOC.: "+(if(document.isBlank())"—" else document),margin,top+98f,8.5f)
@@ -2499,9 +2741,13 @@ class MainActivity:Activity() {
   }
   var y=drawHeader()
   fun endPage(next:Boolean){
-   text("Proforma comercial. No constituye comprobante tributario.",margin,height-18f,
-    if(ticket)7f else 8f,false,labelColor)
-   if(!ticket)right("Página "+number,width-margin,height-18f,8f,false,labelColor)
+   val footerLines=pdfTextLines(company.footer,contentWidth,if(ticket)6.5f else 7.8f,2)
+   footerLines.forEachIndexed{i,value->
+    text(value,margin,height-42f+i*10f,if(ticket)6.5f else 7.8f,false,labelColor)
+   }
+   text("Proforma comercial. No constituye comprobante tributario.",margin,height-16f,
+    if(ticket)6f else 7f,false,labelColor)
+   if(!ticket)right("Página "+number,width-margin,height-16f,7f,false,labelColor)
    pdf.finishPage(page)
    if(next){
     number++
@@ -2559,6 +2805,23 @@ class MainActivity:Activity() {
    fitted("CONDICIÓN DE PAGO: "+pdfPayment,margin,y,contentWidth,8f)
    y+=14f
    fitted("RESPONSABLE: "+pdfSeller,margin,y,contentWidth,8f)
+   y+=14f
+   val headerLines=pdfTextLines(company.header,contentWidth,8f,3)
+   for(h in headerLines){
+    if(y+50f>height)endPage(true)
+    fitted(h,margin,y,contentWidth,8f);y+=11f
+   }
+   val bankLines=pdfTextLines(company.banks,contentWidth,if(ticket)7.2f else 8f,80)
+   if(bankLines.isNotEmpty()){
+    if(y+58f>height)endPage(true)
+    text("CUENTAS BANCARIAS",margin,y,9f,true,labelColor)
+    y+=14f
+    for(bank in bankLines){
+     if(y+47f>height)endPage(true)
+     fitted(bank,margin,y,contentWidth,if(ticket)7.2f else 8f)
+     y+=11f
+    }
+   }
    endPage(false)
    pdf.writeTo(out)
   }finally{pdf.close()}
@@ -2580,6 +2843,7 @@ class MainActivity:Activity() {
   }finally{cc.close()}
  }
  private fun writePdfProformaAdaptada(id:Long,out:java.io.OutputStream){
+  val company=companyInfo()
   val cur=db.readableDatabase.rawQuery(
     "SELECT client,product,qty,unit_price,discount,igv,currency,total,created,discount_amount,tax_affectation FROM quotes WHERE id=?",
     arrayOf(id.toString()))
@@ -2613,7 +2877,7 @@ class MainActivity:Activity() {
    val currName=if(currency=="USD")"DÓLARES" else "SOLES"
    val expiry=pdfExpiry.ifBlank{"POR DEFINIR"}
    val docType=when(document.length){11->"RUC ";8->"DNI ";else->""}
-   fun fmt(v:Double)=String.format(Locale.US,"%,.2f",v)
+   fun fmt(v:Double)=pdfNumber(v,company.decimals)
    fun words(v:Int):String{
     if(v==0)return "CERO"
     val u=arrayOf("","UN","DOS","TRES","CUATRO","CINCO","SEIS","SIETE","OCHO","NUEVE",
@@ -2712,25 +2976,18 @@ class MainActivity:Activity() {
     fun rect(x:Float,y:Float,x2:Float,y2:Float,color:Int){
      p.color=color;p.style=Paint.Style.FILL;canvas.drawRect(x,y,x2,y2,p)
     }
-    fun logo(box:RectF){
-     try{
-      assets.open("belsiperu_logo.png").use{ins->
-       val bitmap=BitmapFactory.decodeStream(ins)
-       if(bitmap!=null){canvas.drawBitmap(bitmap,null,box,Paint(Paint.ANTI_ALIAS_FLAG));bitmap.recycle()}
-      }
-     }catch(_:Exception){}
-    }
+    fun logo(box:RectF){drawCompanyLogo(canvas,box)}
     val num="0002-"+id.toString().padStart(7,'0')
     if(ticket){
      // Recibo legible a 80 mm, de longitud suficiente para las cuentas bancarias.
      logo(RectF(61f,8f,166f,62f))
-     center("BELSIPERU S.A.C",8f,219f,72f,12f,true)
-     center("RUC 20605060634",8f,219f,88f,10f)
+     fit(company.legal,9f,72f,209f,12f,true)
+     center("RUC "+company.ruc,8f,219f,88f,10f)
      rect(9f,96f,218f,121f,Color.rgb(235,235,235))
      center("PROFORMA",9f,218f,113f,15f,true)
      center(num,9f,218f,138f,10.5f)
-     center("JR. LOS TOPACIOS NRO. 2125 INT. T18",9f,218f,153f,7.4f)
-     center("SAN JUAN DE LURIGANCHO - LIMA",9f,218f,165f,7.5f)
+     fit(company.fiscal,9f,153f,207f,7.4f)
+     fit(company.header,9f,165f,207f,7.2f)
      stroke(9f,174f,218f,174f)
      text("EMISIÓN:",9f,190f,8f,true);right(date,217f,190f,8f)
      text("VENCIMIENTO:",9f,205f,8f,true);fit(expiry,101f,205f,117f,8f)
@@ -2763,28 +3020,26 @@ class MainActivity:Activity() {
      stroke(9f,572f,218f,572f)
      fit("USUARIO: "+pdfSeller,9f,586f,207f,8f)
      fit("PAGO: "+pdfPayment,9f,601f,207f,8f)
-     text("BELSIPERU S.A.C - INTERBANK",9f,619f,8f,true)
-     text("Cta. soles: 20030088110506",9f,633f,8f)
-     text("CCI soles: 00320000300881050636",9f,646f,8f)
-     text("Cta. dólares: 2003008810513",9f,667f,8f)
-     text("CCI dólares: 00320000300881051332",9f,680f,8f)
-     stroke(9f,693f,218f,693f)
-     wrapped("Los productos en stock se entregan en 48 horas, salvo venta previa.",207f,8.2f,3)
-      .forEachIndexed{i,t->center(t,9f,218f,714f+i*12f,8.2f)}
-     center("BELSIPERU",9f,218f,776f,10f,true)
+      val ticketBanks=pdfTextLines(company.banks,205f,7.7f,75)
+      text("CUENTAS BANCARIAS",9f,619f,8f,true)
+      ticketBanks.take(6).forEachIndexed{i,value->fit(value,9f,633f+i*11f,207f,7.7f)}
+      stroke(9f,706f,218f,706f)
+      pdfTextLines(company.footer,205f,7.5f,3)
+       .forEachIndexed{i,value->fit(value,9f,721f+i*11f,207f,7.5f)}
+      center(company.commercial.ifBlank{company.legal},9f,218f,776f,10f,true)
      center("Proforma comercial. No es comprobante tributario.",9f,218f,793f,6.5f)
      canvas.restore()
     } else {
      // Composición apaisada para A4 y A5: la tabla ocupa el ancho útil de la hoja.
      val left=20f;val rightEdge=822f
      logo(RectF(22f,18f,132f,96f))
-     text("BELSIPERU S.A.C",144f,31f,16f,true)
-     fit("JR. LOS TOPACIOS NRO. 2125 INT. T18",144f,48f,450f,10f)
-     fit("COO. LA HUAYRONA - LIMA - SAN JUAN DE LURIGANCHO",144f,62f,455f,9f)
-     text("LO MEJOR EN MÁQUINAS Y HERRAMIENTAS INDUSTRIALES PARA EL PERÚ",144f,86f,10f)
+     fit(company.legal,144f,31f,460f,16f,true)
+     fit(company.fiscal,144f,48f,455f,9f)
+     fit(company.business+" · "+company.regime,144f,62f,455f,8f)
+     fit(company.header,144f,86f,470f,10f)
      stroke(621f,17f,821f,17f);stroke(621f,105f,821f,105f)
      stroke(621f,17f,621f,105f);stroke(821f,17f,821f,105f)
-     center("RUC 20605060634",621f,821f,37f,13f)
+     center("RUC "+company.ruc,621f,821f,37f,13f)
      rect(621f,47f,821f,77f,Color.rgb(235,235,235))
      center("PROFORMA",621f,821f,69f,17f,true)
      center(num,621f,821f,98f,13f)
@@ -2846,24 +3101,28 @@ class MainActivity:Activity() {
      text("CUENTAS BANCARIAS",20f,490f,8.8f,true)
      fit(pdfSeller+" - "+date+" "+time,151f,464f,420f,9f)
      fit(pdfPayment,151f,477f,405f,9f)
-     text("BELSIPERU S.A.C",151f,490f,8.8f)
-     text("Cuenta soles Interbank: 20030088110506",151f,508f,8.6f)
-     text("CCI soles: 00320000300881050636",151f,520f,8.6f)
-     text("Cuenta dólares Interbank: 2003008810513",498f,508f,8.6f)
-     text("CCI dólares: 00320000300881051332",498f,520f,8.6f)
-     center("Los productos en stock se entregan en 48 horas, salvo venta previa.",left,rightEdge,551f,9f)
-     center("BELSIPERU",left,rightEdge,578f,11f,true)
+      fit(company.legal,151f,490f,660f,8.8f)
+      val landscapeBanks=pdfTextLines(company.banks,660f,7.8f,75)
+      landscapeBanks.take(5).forEachIndexed{i,value->fit(value,151f,500f+i*9f,659f,7.8f)}
+      pdfTextLines(company.footer,790f,8.2f,2)
+       .forEachIndexed{i,value->fit(value,left,551f+i*11f,795f,8.2f)}
+      center(company.commercial.ifBlank{company.legal},left,rightEdge,578f,11f,true)
      center("Proforma comercial emitida por BELSIPERU. No es comprobante de pago electrónico.",left,rightEdge,591f,7.2f)
     }
     canvas.restore()
     productPicture?.recycle()
     pdf.finishPage(page)
+    val allBanks=pdfTextLines(company.banks,if(ticket)205f else 660f,
+     if(ticket)7.7f else 7.8f,300)
+    addBankContinuationPages(pdf,allBanks.drop(if(ticket)6 else 5),
+     pageWidth,pageHeight)
     pdf.writeTo(out)
    }finally{pdf.close()}
   }finally{cur.close()}
  }
 
  private fun writePdfProforma(id:Long,out:java.io.OutputStream){
+  val company=companyInfo()
   if(pdfPaper=="A4 horizontal" || pdfPaper=="A5 horizontal" || pdfPaper=="Ticket 80 mm") {
    writePdfProformaAdaptada(id,out)
    return
@@ -2908,7 +3167,7 @@ class MainActivity:Activity() {
    val docTag=when(document.length){11->"RUC ";8->"DNI ";else->""}
    val money=if(currency=="USD")"US$" else "S/"
    val nameCurrency=if(currency=="USD")"DÓLARES" else "SOLES"
-   fun amount(n:Double)=String.format(Locale.US,"%,.2f",n)
+   fun amount(n:Double)=pdfNumber(n,company.decimals)
    val pdf=android.graphics.pdf.PdfDocument()
    // La carta conserva exactamente el diseño aprobado. A4 y A5 vertical
    // imprimen la misma maqueta con dimensiones físicas reales y escala uniforme.
@@ -3002,25 +3261,21 @@ class MainActivity:Activity() {
    val literal="SON "+words(cents/100)+" Y "+(cents%100).toString().padStart(2,'0')+"/100 "+nameCurrency
 
    // Encabezado: logotipo, razón social, dirección y recuadro de proforma.
-   try{
-    assets.open("belsiperu_logo.png").use{stream->
-     val bitmap=BitmapFactory.decodeStream(stream)
-     if(bitmap!=null){
-      canvas.drawBitmap(bitmap,null,RectF(15.05f,15.05f,109.11f,109.11f),Paint(Paint.ANTI_ALIAS_FLAG))
-      bitmap.recycle()
-     }
-    }
-   }catch(_:Exception){}
-   text("BELSIPERU S.A.C",116.6f,33.5f,13.2f,true)
-   fit("PRINCIPAL » JR. LOS TOPACIOS NRO. 2125 INT. T18",116.6f,51f,226f,8.47f)
-   fit("COO. LA HUAYRONA - LIMA LIMA SAN JUAN DE",116.6f,62.2f,226f,8.47f)
-   text("LURIGANCHO",116.6f,73.5f,8.47f)
-   text("LO MEJOR EN MAQUINAS Y HERRAMIENTAS",116.6f,93f,8.47f)
-   text("INDUSTRIALES PARA EL PERÚ",116.6f,104f,8.47f)
+   drawCompanyLogo(canvas,RectF(15.05f,15.05f,109.11f,109.11f))
+   fit(company.legal,116.6f,33.5f,226f,13.2f,true)
+   pdfTextLines(company.fiscal,226f,8.47f,3).forEachIndexed{i,value->
+    fit(value,116.6f,51f+i*11f,226f,8.47f)
+   }
+   // Dirección fiscal configurable en las líneas anteriores.
+   // No se inserta una dirección fija en la proforma.
+   pdfTextLines(company.header,226f,8.47f,2).forEachIndexed{i,value->
+    fit(value,116.6f,93f+i*11f,226f,8.47f)
+   }
+   // Cabecera editable desde Configuración → Impresión.
    rect(348.03f,44.21f,543.68f,74.31f,Color.rgb(238,238,238))
    line(347.09f,15.52f,544.62f,15.52f,0.94f);line(347.09f,103.0f,544.62f,103.0f,0.94f)
    line(347.56f,15.05f,347.56f,103.47f,0.94f);line(544.15f,15.05f,544.15f,103.47f,0.94f)
-   center("RUC 20605060634",347.09f,544.62f,35.7f,13.17f)
+   center("RUC "+company.ruc,347.09f,544.62f,35.7f,13.17f)
    center("PROFORMA",347.09f,544.62f,65.0f,15.05f,true)
    center("0002-"+id.toString().padStart(7,'0'),347.09f,544.62f,94f,13.17f)
    // Ficha cliente y emisión.
@@ -3122,19 +3377,21 @@ class MainActivity:Activity() {
    text("CUENTAS BANCARIAS",15.05f,588.4f,8.47f,true)
    fit(pdfSeller+" - "+curDate+" "+curTime,156.1f,564f,373f,8.47f)
    fit(pdfPayment,156.1f,576.2f,373f,8.47f)
-   text("BELSIPERU S.A.C",156.1f,588.4f,8.47f)
-   text("Cuenta Corriente Soles Interbank: 20030088110506",156.1f,613f,8.47f)
-   text("Interbancario Soles Interbank: 2003008810506",156.1f,624.3f,8.47f)
-   text("00320000300881050636",156.1f,635.6f,8.47f)
-   text("Cuenta Corriente Dólares Interbank: 2003008810513",156.1f,658.2f,8.47f)
-   text("Interbancario Dólares Interbank: 2003008810513",156.1f,669.5f,8.47f)
-   text("00320000300881051332",156.1f,680.8f,8.47f)
-   center("Los productos en Stock, la entrega será realizada dentro de las 48 Horas, salvo venta Previa.",15.05f,544.62f,710f,9.4f)
-   center("BELSIPERU",15.05f,544.62f,753f,11.3f,true)
+   fit(company.legal,156.1f,588.4f,370f,8.47f)
+   val singleBankLines=pdfTextLines(company.banks,365f,8f,300)
+   singleBankLines.take(9).forEachIndexed{i,value->
+    fit(value,156.1f,602f+i*9.8f,365f,8f)
+   }
+   pdfTextLines(company.footer,520f,8.4f,2).forEachIndexed{i,value->
+    fit(value,15.05f,710f+i*11f,520f,8.4f)
+   }
+   center(company.commercial.ifBlank{company.legal},15.05f,544.62f,753f,11.3f,true)
    center("Proforma comercial emitida mediante BELSIPERU. No constituye comprobante de pago electrónico.",15.05f,544.62f,766f,7.5f)
    canvas.restore()
    productPicture?.recycle()
    pdf.finishPage(page)
+   addBankContinuationPages(pdf,singleBankLines.drop(9),
+    pageSize.first,pageSize.second)
    try{pdf.writeTo(out)}finally{pdf.close()}
   }finally{c.close()}
  }
@@ -3146,6 +3403,7 @@ class MainActivity:Activity() {
   if(multi){writePdfMultiple(id,out);return}
 
   if(pdfStyle=="Proforma BELSIPERU"){writePdfProforma(id,out);return}
+   val company=companyInfo()
   val c=db.readableDatabase.rawQuery("SELECT client,product,qty,unit_price,discount,igv,currency,total,created,product_photo,discount_amount FROM quotes WHERE id=?",arrayOf(id.toString()))
   if(!c.moveToFirst()){c.close();return}
   val size=when(pdfPaper){
@@ -3164,28 +3422,17 @@ class MainActivity:Activity() {
   val canvas=page.canvas;val p=Paint(3)
   val main=when(pdfStyle){"Corporativo"->Color.rgb(18,52,90);"Prémium"->Color.rgb(12,39,58);else->Color.rgb(18,52,90)}
   p.color=main;canvas.drawRect(0f,0f,w,if(compact)100f else 120f,p)
-  // Logo extraído del documento comercial de referencia.
-  if(!compact) {
-   try {
-    assets.open("belsiperu_logo.png").use { stream ->
-     val logo=BitmapFactory.decodeStream(stream)
-     if(logo!=null) {
-      canvas.drawBitmap(logo,null,RectF(w-margin-82f,12f,w-margin,91f),Paint(3))
-      logo.recycle()
-     }
-    }
-   }catch(_:Exception){}
-  }
+  if(!compact)drawCompanyLogo(canvas,RectF(w-margin-82f,12f,w-margin,91f))
   p.color=Color.WHITE;p.textSize=if(compact)17f else 24f;p.isFakeBoldText=true
-  canvas.drawText("BELSIPERU S.A.C.",margin,if(compact)33f else 48f,p)
+  canvas.drawText(company.legal.take(if(compact)18 else 35),margin,if(compact)33f else 48f,p)
   p.textSize=if(compact)9f else 12f;p.isFakeBoldText=false
-  canvas.drawText("RUC 20605060634",margin,if(compact)52f else 73f,p)
+  canvas.drawText("RUC "+company.ruc,margin,if(compact)52f else 73f,p)
   p.color=Color.rgb(213,165,74);p.textSize=if(compact)10f else 15f
   canvas.drawText("COT-${id.toString().padStart(6,'0')}",margin,if(compact)75f else 100f,p)
   // Marca de agua muy tenue.
   p.color=Color.argb(16,18,52,90);p.textSize=if(compact)29f else 65f;p.isFakeBoldText=true
   canvas.save();canvas.rotate(-25f,w/2,h/2)
-  canvas.drawText("BELSIPERU",margin,h/2,p);canvas.restore()
+  canvas.drawText(company.commercial.ifBlank{company.legal}.take(20),margin,h/2,p);canvas.restore()
   p.isFakeBoldText=false;p.color=main;p.textSize=if(compact)10f else 13f
   val top=if(compact)125f else 158f
   canvas.drawText("CLIENTE: ${c.getString(0).take(if(compact)25 else 52)}",margin,top,p)
@@ -3199,8 +3446,8 @@ class MainActivity:Activity() {
   val product=c.getString(1)
   canvas.drawText(product.take(if(compact)27 else 55),margin+8f,productY,p)
   canvas.drawText("Cantidad: ${c.getInt(2)}",margin+8f,productY+23f,p)
-  canvas.drawText("Precio unitario: ${c.getString(6)} ${"%.2f".format(Locale.US,c.getDouble(3))}",margin+8f,productY+44f,p)
-  canvas.drawText("Descuento: ${c.getDouble(4)} % + ${"%.2f".format(Locale.US,c.getDouble(10))}",margin+8f,productY+65f,p)
+  canvas.drawText("Precio unitario: ${c.getString(6)} ${pdfNumber(c.getDouble(3),company.decimals)}",margin+8f,productY+44f,p)
+  canvas.drawText("Descuento: ${c.getDouble(4)} % + ${pdfNumber(c.getDouble(10),company.decimals)}",margin+8f,productY+65f,p)
   canvas.drawText("IGV: ${if(c.getInt(5)==1)"18 %" else "No aplicado"}",margin+8f,productY+86f,p)
   val totalY=minOf(h-82f,productY+145f)
   val productPicture=loadQuoteProductBitmap(id)
@@ -3219,17 +3466,29 @@ class MainActivity:Activity() {
    productPicture.recycle()
   }
   p.color=main;p.textSize=if(compact)14f else 20f;p.isFakeBoldText=true
-  canvas.drawText("TOTAL ${c.getString(6)} ${"%.2f".format(Locale.US,c.getDouble(7))}",margin,totalY,p)
+  canvas.drawText("TOTAL ${c.getString(6)} ${pdfNumber(c.getDouble(7),company.decimals)}",margin,totalY,p)
   p.isFakeBoldText=false;p.textSize=if(compact)8f else 10f
+  val genericBanks=pdfTextLines(company.banks,w-margin*2,8.2f,300)
   if(!compact && h>560f) {
    p.color=main;p.textSize=9f;p.isFakeBoldText=false
-   canvas.drawText("CONDICIÓN DE PAGO: CONTADO",margin,h-145f,p)
-   canvas.drawText("Interbank soles: 20030088110506",margin,h-129f,p)
-   canvas.drawText("Interbank dólares: 2003008810513",margin,h-113f,p)
-   canvas.drawText("Entrega referencial: 48 horas para productos en stock, salvo venta previa.",margin,h-97f,p)
+   canvas.drawText("CONDICIÓN DE PAGO: "+pdfPayment,margin,h-165f,p)
+   genericBanks.take(3).forEachIndexed{i,value->
+    p.textSize=8.2f;canvas.drawText(value,margin,h-147f+i*13f,p)
+   }
+   pdfTextLines(company.footer,w-margin*2,8f,2).forEachIndexed{i,value->
+    p.textSize=8f;canvas.drawText(value,margin,h-88f+i*12f,p)
+   }
+  }else{
+   pdfTextLines(company.footer,w-margin*2,if(compact)6.8f else 8f,2).forEachIndexed{i,value->
+    p.color=main;p.textSize=if(compact)6.8f else 8f
+    canvas.drawText(value,margin,h-58f+i*10f,p)
+   }
   }
-  p.color=main;p.textSize=if(compact)8f else 10f
+p.color=main;p.textSize=if(compact)8f else 10f
   canvas.drawText("Proforma comercial - no es comprobante tributario.",margin,h-35f,p)
-  pdf.finishPage(page);pdf.writeTo(out);pdf.close();c.close()
+  pdf.finishPage(page)
+  addBankContinuationPages(pdf,genericBanks.drop(if(!compact && h>560f)3 else 0),
+   size.first,size.second)
+  pdf.writeTo(out);pdf.close();c.close()
  }
 }

@@ -15,6 +15,7 @@ on:
       - fix/catalogo-visible-cotizaciones-v1-11
       - fix/busqueda-productos-bajo-demanda-v1-12
       - feat/botones-calendario-v1-13
+      - feat/configuracion-empresa-impresion-v1-14
   pull_request:
     branches:
       - main
