@@ -148,9 +148,73 @@ class MainActivity:Activity() {
   return try{assets.open("belsiperu_logo.png").use{BitmapFactory.decodeStream(it)}}
    catch(_:Exception){null}catch(_:OutOfMemoryError){null}
  }
- private fun drawCompanyLogo(canvas:Canvas,rect:RectF){
-  val bmp=loadCompanyLogoBitmap()?:return
-  try{drawProductImage(canvas,bmp,rect)}finally{bmp.recycle()}
+ // Corrige logos con márgenes blancos: detecta el dibujo real,
+ // elimina solo el fondo blanco opaco y recorta el área sobrante.
+ // No modifica el archivo original de configuración de la empresa.
+ private fun logoSinFondo(source:Bitmap):Bitmap{
+  val width=source.width;val height=source.height
+  if(width<=1||height<=1)return source
+  val data=IntArray(width*height)
+  source.getPixels(data,0,width,0,0,width,height)
+  val corners=intArrayOf(data[0],data[width-1],
+   data[(height-1)*width],data[height*width-1])
+  val whiteBackground=corners.count{
+   Color.alpha(it)>=235&&Color.red(it)>=238&&
+   Color.green(it)>=238&&Color.blue(it)>=238
+  }>=3
+  var minX=width;var minY=height;var maxX=-1;var maxY=-1
+  for(y in 0 until height){
+   val offset=y*width
+   for(x in 0 until width){
+    val color=data[offset+x]
+    val visible=if(whiteBackground){
+     Color.alpha(color)>20 &&
+      minOf(Color.red(color),Color.green(color),Color.blue(color))<231
+    }else Color.alpha(color)>20
+    if(visible){
+     if(x<minX)minX=x
+     if(x>maxX)maxX=x
+     if(y<minY)minY=y
+     if(y>maxY)maxY=y
+    }
+   }
+  }
+  if(maxX<minX||maxY<minY)return source
+  val padX=((maxX-minX+1)*0.035f).toInt().coerceAtLeast(2)
+  val padY=((maxY-minY+1)*0.12f).toInt().coerceAtLeast(2)
+  minX=(minX-padX).coerceAtLeast(0)
+  maxX=(maxX+padX).coerceAtMost(width-1)
+  minY=(minY-padY).coerceAtLeast(0)
+  maxY=(maxY+padY).coerceAtMost(height-1)
+  val cropW=maxX-minX+1;val cropH=maxY-minY+1
+  val pixels=IntArray(cropW*cropH)
+  for(y in 0 until cropH){
+   for(x in 0 until cropW){
+    val old=data[(minY+y)*width+minX+x]
+    if(!whiteBackground){pixels[y*cropW+x]=old;continue}
+    val minChannel=minOf(Color.red(old),Color.green(old),Color.blue(old))
+    val opacity=((255-minChannel)*255/29).coerceIn(0,255)
+    val a=Color.alpha(old)*opacity/255
+    pixels[y*cropW+x]=(old and 0x00FFFFFF) or (a shl 24)
+   }
+  }
+  return Bitmap.createBitmap(cropW,cropH,Bitmap.Config.ARGB_8888).apply{
+   setPixels(pixels,0,cropW,0,0,cropW,cropH)
+  }
+ }
+ private fun drawCompanyLogo(canvas:Canvas,rect:RectF,sinFondo:Boolean=false){
+  val original=loadCompanyLogoBitmap()?:return
+  var processed:Bitmap?=null
+  try{
+   if(sinFondo){
+    processed=try{logoSinFondo(original)}
+     catch(_:Exception){original}catch(_:OutOfMemoryError){original}
+   }
+   drawProductImage(canvas,processed?:original,rect)
+  }finally{
+   if(processed!=null&&processed!==original)processed.recycle()
+   original.recycle()
+  }
  }
  private fun pdfTextLines(content:String,maxWidth:Float,size:Float,limit:Int=16):List<String>{
   if(content.isBlank())return emptyList()
@@ -3599,9 +3663,8 @@ class MainActivity:Activity() {
     }
     paint.style=Paint.Style.FILL;paint.color=Color.rgb(250,168,29)
     canvas.drawPath(angle,paint)
-    rect(0f,0f,w*0.28f,13f,Color.WHITE)
-    rect(margin,26f,margin+103f,77f,Color.WHITE)
-    drawCompanyLogo(canvas,RectF(margin+4f,28f,margin+99f,75f))
+    // Logo transparente, ampliado sobre el panel naranja; sin caja blanca.
+    drawCompanyLogo(canvas,RectF(margin+2f,22f,margin+123f,86f),true)
     val x=margin+130f
     clipped(config.legal,x,43f,w-margin-x,if(compact)12f else 16f,true,Color.WHITE)
     clipped(config.business.ifBlank{"Herramientas y maquinaria industrial"},
@@ -3639,9 +3702,15 @@ class MainActivity:Activity() {
     }
     paint.style=Paint.Style.FILL;paint.color=Color.WHITE
     canvas.drawPath(angle,paint)
-    rect(margin,13f,margin+115f,68f,Color.WHITE)
-    drawCompanyLogo(canvas,RectF(margin+5f,15f,margin+110f,66f))
-    val x=margin+125f
+    // El logo se recorta y ocupa el panel dorado, sin fondo blanco.
+    val brandPanel=Path().apply{
+     moveTo(margin,11f);lineTo(margin+146f,11f)
+     lineTo(margin+131f,73f);lineTo(margin,73f);close()
+    }
+    paint.style=Paint.Style.FILL;paint.color=Color.rgb(245,182,43)
+    canvas.drawPath(brandPanel,paint)
+    drawCompanyLogo(canvas,RectF(margin+5f,19f,margin+122f,67f),true)
+    val x=margin+154f
     clipped(config.legal,x,32f,w-margin-x-42f,
      if(compact)11.8f else 17f,true,Color.WHITE)
     clipped(config.header,x,48f,w-margin-x-42f,
@@ -3672,9 +3741,11 @@ class MainActivity:Activity() {
   fun nextPageHeader(){
    rect(0f,0f,w,62f,navy)
    rect(0f,61f,w,65f,if(modern)teal else gold)
-   drawCompanyLogo(canvas,RectF(margin,10f,margin+84f,53f))
-   clipped(config.legal,margin+93f,29f,cw-93f,11f,true,Color.WHITE)
-   clipped("Continuación · "+quoteNumber,margin+93f,45f,cw-93f,8.2f,false,Color.WHITE)
+   rect(margin,9f,margin+98f,55f,
+    if(modern)Color.rgb(250,168,29) else Color.rgb(245,182,43))
+   drawCompanyLogo(canvas,RectF(margin+4f,13f,margin+94f,51f),true)
+   clipped(config.legal,margin+106f,29f,cw-106f,11f,true,Color.WHITE)
+   clipped("Continuación · "+quoteNumber,margin+106f,45f,cw-106f,8.2f,false,Color.WHITE)
    y=84f
   }
   fun beginPage(continued:Boolean){
