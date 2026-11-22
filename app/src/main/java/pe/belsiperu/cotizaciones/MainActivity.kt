@@ -993,6 +993,7 @@ class MainActivity:Activity() {
    "A5 vertical"->Pair(420,595)
    "A5 horizontal"->Pair(595,420)
    "Ticket 80 mm"->Pair(227,650)
+   "Carta vertical"->Pair(612,792)
    else->Pair(595,842)
   }
   val w=size.first.toFloat();val h=size.second.toFloat()
