@@ -3542,7 +3542,15 @@ class MainActivity:Activity() {
    "A5 horizontal"->Pair(595,420)
    else->Pair(612,792)
   }
-  val w=paper.first.toFloat();val h=paper.second.toFloat()
+  // La plantilla original usa casi 792 pt de altura. Al imprimir en A4
+  // horizontal o A5, la página física es más baja; adaptamos TODO el diseño
+  // con escala uniforme (tipografía, fotografías, columnas y pie incluidos).
+  // Así 1 artículo + resumen cabe en una página sin deformar el contenido.
+  val pageWidth=paper.first.toFloat()
+  val pageHeight=paper.second.toFloat()
+  val pageScale=minOf(1f,pageHeight/792f)
+  val w=pageWidth/pageScale
+  val h=pageHeight/pageScale
   val compact=w<500f || h<600f
   val margin=if(compact)20f else 28f
   val cw=w-2f*margin
@@ -3750,14 +3758,16 @@ class MainActivity:Activity() {
    clipped("Continuación · "+quoteNumber,margin+106f,45f,cw-106f,8.2f,false,Color.WHITE)
    y=84f
   }
-  fun beginPage(continued:Boolean){
+  fun beginPage(continued:Boolean,withTable:Boolean=true){
    pageNumber+=1
    page=pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(
     paper.first,paper.second,pageNumber).create())
    canvas=page.canvas
+   canvas.scale(pageScale,pageScale)
    rect(0f,0f,w,h,Color.WHITE)
    if(continued)nextPageHeader() else firstPageHeader()
-   tableHeader()
+   // Evitar encabezados de productos vacíos en una página de solo totales.
+   if(withTable)tableHeader()
   }
   fun finishPage(){
    if(modern){
@@ -3797,11 +3807,11 @@ class MainActivity:Activity() {
    }
    pdf.finishPage(page)
   }
-  fun ensureSpace(required:Float){
+  fun ensureSpace(required:Float,withTableOnNextPage:Boolean=true){
    val protectedFooter=if(modern)60f else 140f
    if(y+required>h-protectedFooter){
     finishPage()
-    beginPage(true)
+    beginPage(true,withTableOnNextPage)
    }
   }
   fun money(v:Double)=currencyMark+" "+pdfNumber(v,config.decimals)
@@ -3879,7 +3889,7 @@ class MainActivity:Activity() {
     // Como en IFITSA: gran espacio libre, condiciones abajo a la izquierda
     // e importes apilados en el sector inferior derecho.
     if(!compact&&pageNumber==1&&y<h-263f)y=h-263f
-    ensureSpace(157f)
+    ensureSpace(174f,false)
     val baseY=y
     val boxX=w-margin-191f
     text("Glosa:",margin+4f,baseY+8f,8f,true,inkColor)
@@ -3924,15 +3934,17 @@ class MainActivity:Activity() {
     }
     y=baseY+174f
     if(config.banks.isNotBlank()){
-     ensureSpace(30f)
+     ensureSpace(30f,false)
      text("CUENTAS BANCARIAS",margin,y,8.5f,true,teal);y+=15f
      for(value in pdfTextLines(config.banks,cw-10f,7.8f,150)){
-      ensureSpace(13f);text(value,margin+5f,y,7.8f);y+=12f
+      ensureSpace(13f,false);text(value,margin+5f,y,7.8f);y+=12f
      }
     }
    }else{
     // Como en FULLTRADE: resumen verde horizontal y separadores punteados.
-    ensureSpace(190f)
+    // El bloque comercial ocupa ~140 pt; reservar 190 provocaba saltos
+    // innecesarios a la página 2 incluso cuando había una sola fotografía.
+    ensureSpace(154f,false)
     y+=8f
     val greenBand=Color.rgb(83,232,51)
     paint.style=Paint.Style.FILL;paint.color=greenBand
@@ -3967,20 +3979,20 @@ class MainActivity:Activity() {
     if(notes.isNotBlank()){
      text("Observaciones:",margin+8f,y,8f,true);y+=14f
      for(value in pdfTextLines(notes,cw-14f,7.5f,80)){
-      ensureSpace(12f);text(value,margin+8f,y,7.5f);y+=12f
+      ensureSpace(12f,false);text(value,margin+8f,y,7.5f);y+=12f
      }
     }
     if(config.footer.isNotBlank()){
      y+=6f
      for(value in pdfTextLines(config.footer,cw-15f,7.5f,50)){
-      ensureSpace(12f);text(value,margin+8f,y,7.5f);y+=12f
+      ensureSpace(12f,false);text(value,margin+8f,y,7.5f);y+=12f
      }
     }
     if(config.banks.isNotBlank()){
-     ensureSpace(30f);y+=5f
+     ensureSpace(30f,false);y+=5f
      text("CUENTAS BANCARIAS",margin+8f,y,8.5f,true,navy);y+=15f
      for(value in pdfTextLines(config.banks,cw-16f,7.4f,150)){
-      ensureSpace(13f);text(value,margin+8f,y,7.4f);y+=12f
+      ensureSpace(13f,false);text(value,margin+8f,y,7.4f);y+=12f
      }
     }
    }
