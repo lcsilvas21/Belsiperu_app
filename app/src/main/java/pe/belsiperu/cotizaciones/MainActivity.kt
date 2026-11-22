@@ -2456,7 +2456,9 @@ class MainActivity:Activity() {
   screen("Opciones PDF");button("← Cotizaciones"){quotes()}
   info("Modelo de proforma BELSIPERU","Se conserva el diseño aprobado. Si el producto tiene una fotografía accesible, aparecerá en el PDF.")
   label("Diseño")
-  val style=choice(listOf("Proforma BELSIPERU","Moderno","Corporativo","Prémium"))
+  val style=choice(listOf("Proforma BELSIPERU","Moderno","Corporativo"))
+  info("Estilos disponibles",
+   "Proforma BELSIPERU conserva el formato habitual. Moderno tiene un encabezado comercial y Corporativo una presentación formal. Los dos nuevos diseños están adaptados a los datos de tu empresa.")
   label("Tamaño de papel")
   val paper=choice(listOf("Carta vertical","A4 vertical","A4 horizontal","A5 vertical","A5 horizontal","Ticket 80 mm"))
   label("Vencimiento de la proforma (dd/MM/aaaa, opcional)")
@@ -2520,6 +2522,13 @@ class MainActivity:Activity() {
   val payment=input("CONTADO / CRÉDITO")
   payment.setText(pdfPayment)
   button("Generar PDF"){
+   val selectedStyle=style.selectedItem.toString()
+   if(paper.selectedItem.toString()=="Ticket 80 mm" && selectedStyle!="Proforma BELSIPERU"){
+    AlertDialog.Builder(this).setTitle("Tamaño de papel")
+     .setMessage("Los diseños Moderno y Corporativo necesitan papel Carta, A4 o A5 para conservar sus tablas. Selecciona otro tamaño o elige Proforma BELSIPERU para un ticket de 80 mm.")
+     .setPositiveButton("Entendido",null).show()
+    return@button
+   }
    val dateText=expiry.text.toString().trim()
    if(dateText.isNotEmpty()){
     val parser=SimpleDateFormat("dd/MM/yyyy",Locale("es","PE")).apply{isLenient=false}
@@ -2528,7 +2537,7 @@ class MainActivity:Activity() {
      return@button
     }
    }
-   pdfStyle=style.selectedItem.toString()
+   pdfStyle=selectedStyle
    pdfPaper=paper.selectedItem.toString()
    pdfExpiry=dateText
    pdfSeller=seller.text.toString().trim().ifEmpty{"BELSIPERU"}
@@ -3401,6 +3410,10 @@ class MainActivity:Activity() {
  }
 
  private fun writePdf(id:Long,out:java.io.OutputStream){
+  if(pdfStyle=="Moderno" || pdfStyle=="Corporativo"){
+   writePdfStyled(id,out,pdfStyle=="Moderno")
+   return
+  }
   val count=db.readableDatabase.rawQuery("SELECT COUNT(*) FROM quote_items WHERE quote_id=?",
    arrayOf(id.toString()))
   val multi=try{count.moveToFirst()&&count.getInt(0)>1}finally{count.close()}
