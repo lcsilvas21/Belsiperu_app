@@ -21,6 +21,7 @@ on:
       - feat/pdf-referencias-fieles-v1-17
       - feat/pdf-ajustes-v1-18
       - feat/pdf-adaptativo-v1-19
+      - feat/acciones-proforma-v1-20
   pull_request:
     branches:
       - main
@@ -49,6 +50,6 @@ jobs:
       - name: Guardar APK
         uses: actions/upload-artifact@v4
         with:
-          name: BELSIPERU-V1.19-APK-PRUEBA
+          name: BELSIPERU-V1.20-APK-PRUEBA
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
