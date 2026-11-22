@@ -12,6 +12,7 @@ on:
       - feat/clientes-edicion-direcciones-v1-8
       - feat/cotizacion-clientes-productos-v1-9
       - fix/registro-manual-clientes-pdf-v1-10
+      - fix/catalogo-visible-cotizaciones-v1-11
   pull_request:
     branches:
       - main
