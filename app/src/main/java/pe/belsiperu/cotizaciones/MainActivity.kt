@@ -1060,6 +1060,206 @@ class MainActivity:Activity() {
  }
 
 
+
+ private data class CatalogExcelRow(
+  val code:String,val line:Int,val values:android.content.ContentValues
+ )
+ private fun selectCatalogExcel(){
+  val intent=Intent(Intent.ACTION_OPEN_DOCUMENT).apply{
+   addCategory(Intent.CATEGORY_OPENABLE)
+   type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+   addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+  }
+  startActivityForResult(intent,95)
+ }
+ private fun exportCatalogExcel(template:Boolean){
+  pendingCatalogExportTemplate=template
+  val filename=if(template)"BELSIPERU_PLANTILLA_PRODUCTOS.xlsx"
+   else "BELSIPERU_CATALOGO_PRODUCTOS.xlsx"
+  val intent=Intent(Intent.ACTION_CREATE_DOCUMENT).apply{
+   addCategory(Intent.CATEGORY_OPENABLE)
+   type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+   putExtra(Intent.EXTRA_TITLE,filename)
+  }
+  startActivityForResult(intent,96)
+ }
+ private fun writeCatalogExcel(uri:Uri,template:Boolean){
+  Thread{
+   try{
+    val data=mutableListOf<List<String>>()
+    if(!template){
+     val cursor=db.readableDatabase.rawQuery(
+      "SELECT code,name,kind,barcode,category,brand,unit,currency,price,"+
+      "purchase_price,stock,min_stock,sale_includes_igv,purchase_includes_igv,"+
+      "tax_affectation,isc_type,sunat_code,icbper,sell_without_stock,weight "+
+      "FROM products ORDER BY name COLLATE NOCASE",null)
+     try{
+      while(cursor.moveToNext()){
+       val row=mutableListOf<String>()
+       for(i in 0 until cursor.columnCount){
+        row.add(if(cursor.isNull(i))"" else
+         if(i in listOf(12,13,17,18)){
+          if(cursor.getInt(i)==1)"SI" else "NO"
+         }else cursor.getString(i)?:"")
+       }
+       data.add(row)
+      }
+     }finally{cursor.close()}
+    }
+    val stream=contentResolver.openOutputStream(uri)
+     ?:throw IllegalStateException("No se puede abrir el archivo de destino")
+    stream.use{CatalogExcel.write(it,data)}
+    runOnUiThread{
+     toast(if(template)"Plantilla Excel guardada" else
+      "Catálogo Excel exportado: "+data.size+" producto(s).")
+    }
+   }catch(e:Exception){
+    runOnUiThread{toast("No se pudo exportar Excel: "+(e.message?:"Archivo inválido"))}
+   }
+  }.start()
+ }
+ private fun importCellNumber(value:String,default:Double,row:Int,field:String):Double{
+  if(value.isBlank())return default
+  val normalized=value.trim().replace(" ","").replace(',', '.')
+  val number=normalized.toDoubleOrNull()
+  if(number==null||!number.isFinite()||number<0)
+   throw IllegalArgumentException("Fila "+row+": "+field+" debe ser número no negativo.")
+  return number
+ }
+ private fun importCatalogExcel(uri:Uri){
+  Thread{
+   try{
+    val input=contentResolver.openInputStream(uri)
+     ?:throw IllegalStateException("No se pudo abrir el Excel.")
+    val rows=input.use{CatalogExcel.read(it)}
+    if(rows.isEmpty())throw IllegalArgumentException("No hay productos en el archivo.")
+    val approved=mutableListOf<CatalogExcelRow>()
+    val failures=mutableListOf<String>()
+    val uniqueCodes=mutableSetOf<String>()
+    for(row in rows){
+     val line=row["_fila"]?.toIntOrNull()?:0
+     try{
+      val code=row["codigo"]?.trim().orEmpty()
+      val name=row["nombre"]?.trim().orEmpty()
+      if(code.isEmpty()||name.isEmpty())throw IllegalArgumentException(
+       "Fila "+line+": Código y Nombre son obligatorios.")
+      if(code.length>120||name.length>500)throw IllegalArgumentException(
+       "Fila "+line+": código o nombre demasiado largo.")
+      if(!uniqueCodes.add(code.uppercase(Locale.ROOT)))
+       throw IllegalArgumentException("Fila "+line+": código duplicado en Excel.")
+      val kind=(row["tipo"]?:"PRODUCTO").trim().uppercase(Locale.ROOT).ifEmpty{"PRODUCTO"}
+      if(kind !in listOf("PRODUCTO","SERVICIO"))
+       throw IllegalArgumentException("Fila "+line+": Tipo debe ser PRODUCTO o SERVICIO.")
+      val currency=(row["moneda"]?:"PEN").trim().uppercase(Locale.ROOT).ifEmpty{"PEN"}
+      if(currency !in listOf("PEN","USD"))
+       throw IllegalArgumentException("Fila "+line+": moneda debe ser PEN o USD.")
+      val tax=(row["afectacion_igv"]?:"GRAVADO").trim().uppercase(Locale.ROOT)
+       .ifEmpty{"GRAVADO"}
+      if(tax !in listOf("GRAVADO","EXONERADO","INAFECTO"))
+       throw IllegalArgumentException("Fila "+line+": afectación IGV inválida.")
+      val isc=(row["tipo_isc"]?:"NO APLICA").trim().uppercase(Locale.ROOT)
+       .ifEmpty{"NO APLICA"}
+      val sale=importCellNumber(row["precio_venta"].orEmpty(),0.0,line,"Precio venta")
+      val buy=importCellNumber(row["precio_compra"].orEmpty(),0.0,line,"Precio compra")
+      val stock=importCellNumber(row["stock"].orEmpty(),0.0,line,"Stock")
+      val minimum=importCellNumber(row["stock_minimo"].orEmpty(),0.0,line,"Stock mínimo")
+      val weight=importCellNumber(row["peso_kg"].orEmpty(),0.0,line,"Peso")
+      if(stock%1.0!=0.0||minimum%1.0!=0.0||
+       stock>Int.MAX_VALUE||minimum>Int.MAX_VALUE)
+       throw IllegalArgumentException("Fila "+line+": stock debe ser número entero.")
+      fun yes(field:String,default:Boolean=false):Boolean{
+       val text=(row[field]?:if(default)"SI" else "NO").trim()
+        .uppercase(Locale.ROOT)
+       return text in listOf("SI","SÍ","1","TRUE","VERDADERO","YES")
+      }
+      val service=kind=="SERVICIO"
+      val values=android.content.ContentValues().apply{
+       put("code",code);put("name",name);put("kind",kind)
+       put("barcode",row["codigo_barras"].orEmpty())
+       put("category",row["categoria"].orEmpty());put("brand",row["marca"].orEmpty())
+       put("unit",row["unidad"]?.ifBlank{"UNIDADES"}?:"UNIDADES")
+       put("currency",currency);put("price",sale);put("purchase_price",buy)
+       put("stock",if(service)0 else stock.toInt())
+       put("min_stock",if(service)0 else minimum.toInt())
+       put("sale_includes_igv",if(tax=="GRAVADO"&&yes("venta_incluye_igv",true))1 else 0)
+       put("purchase_includes_igv",if(tax=="GRAVADO"&&yes("compra_incluye_igv",true))1 else 0)
+       put("tax_affectation",tax);put("isc_type",isc)
+       put("sunat_code",row["codigo_sunat"].orEmpty())
+       put("icbper",if(yes("icbper"))1 else 0)
+       put("sell_without_stock",if(service||yes("vender_sin_stock"))1 else 0)
+       put("weight",weight)
+      }
+      approved.add(CatalogExcelRow(code,line,values))
+     }catch(e:Exception){failures.add(e.message?:"Fila "+line+": datos incorrectos.")}
+    }
+    if(approved.isEmpty())throw IllegalArgumentException(
+     "No hay filas válidas. "+failures.take(2).joinToString(" "))
+    val existing=db.readableDatabase.rawQuery("SELECT code FROM products",null)
+    val codes=mutableSetOf<String>()
+    try{while(existing.moveToNext()){
+     codes.add((existing.getString(0)?:"").uppercase(Locale.ROOT))
+    }}finally{existing.close()}
+    val found=approved.count{it.code.uppercase(Locale.ROOT) in codes}
+    val fresh=approved.size-found
+    val details=buildString{
+     append("Registros correctos: ").append(approved.size)
+     append("\nNuevos: ").append(fresh)
+     append("\nCódigos existentes: ").append(found)
+     append("\nFilas inválidas u omitidas: ").append(failures.size)
+     if(failures.isNotEmpty()){
+      append("\n\nEjemplos:\n").append(failures.take(4).joinToString("\n"))
+     }
+     append("\n\nActualizar existentes reemplaza sus datos comerciales y stock. Conserva las fotos y las variantes de precio.")
+    }
+    runOnUiThread{
+     AlertDialog.Builder(this)
+      .setTitle("Importar catálogo de Excel")
+      .setMessage(details)
+      .setNegativeButton("Cancelar",null)
+      .setNeutralButton("Solo productos nuevos"){_,_->saveCatalogImport(approved,false)}
+      .setPositiveButton("Nuevos y actualizar existentes"){_,_->
+       AlertDialog.Builder(this).setTitle("Confirmar actualización de stock")
+        .setMessage("Se modificarán precios y existencias de los códigos presentes en el Excel. Esta acción no crea movimientos de Kardex. ¿Confirmas?")
+        .setNegativeButton("Cancelar",null)
+        .setPositiveButton("Sí, actualizar"){_,_->saveCatalogImport(approved,true)}
+        .show()
+      }.show()
+    }
+   }catch(e:Exception){
+    runOnUiThread{toast("Error importando Excel: "+(e.message?:"Archivo inválido"))}
+   }
+  }.start()
+ }
+ private fun saveCatalogImport(records:List<CatalogExcelRow>,updateExisting:Boolean){
+  Thread{
+   var added=0;var updated=0;var skipped=0
+   val database=db.writableDatabase
+   try{
+    database.beginTransaction()
+    for(item in records){
+     val c=database.rawQuery(
+      "SELECT id FROM products WHERE code=? COLLATE NOCASE LIMIT 1",
+      arrayOf(item.code))
+     val id=try{if(c.moveToFirst())c.getLong(0) else null}finally{c.close()}
+     if(id==null){
+      database.insertOrThrow("products",null,item.values);added++
+     }else if(updateExisting){
+      if(database.update("products",item.values,"id=?",arrayOf(id.toString()))==1)
+       updated++ else skipped++
+     }else skipped++
+    }
+    database.setTransactionSuccessful()
+    runOnUiThread{
+     toast("Excel importado: "+added+" nuevos, "+updated+
+      " actualizados, "+skipped+" omitidos.")
+     products()
+    }
+   }catch(e:Exception){
+    runOnUiThread{toast("No se importó ningún cambio: "+(e.message?:"Error de base de datos"))}
+   }finally{if(database.inTransaction())database.endTransaction()}
+  }.start()
+ }
+
  private fun products(){
   screen("Catálogo")
   button("＋ Nuevo producto"){productEditor()}
