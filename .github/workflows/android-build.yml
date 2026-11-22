@@ -1,4 +1,3 @@
-
 name: Android Build
 
 on:
@@ -6,35 +5,49 @@ on:
   push:
     branches:
       - main
+      - feat/belsiperu-v2-redisenio
+      - feat/escaneo-codigo-barras-camara
+      - feat/consulta-dni-automatico
+      - feat/identificacion-automatica-ruc-dni
+      - feat/clientes-edicion-direcciones-v1-8
+      - feat/cotizacion-clientes-productos-v1-9
+      - fix/registro-manual-clientes-pdf-v1-10
+      - fix/catalogo-visible-cotizaciones-v1-11
+      - fix/busqueda-productos-bajo-demanda-v1-12
+      - feat/botones-calendario-v1-13
+      - feat/configuracion-empresa-impresion-v1-14
+      - fix/pie-pdf-centrado-v1-15
+      - feat/disenos-pdf-moderno-corporativo-v1-16
+      - feat/pdf-referencias-fieles-v1-17
+      - feat/pdf-ajustes-v1-18
+  pull_request:
+    branches:
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Descargar proyecto
         uses: actions/checkout@v4
-
       - name: Configurar Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools'
-
       - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
-
+        with:
+          gradle-version: '8.10.2'
       - name: Compilar APK
         run: gradle assembleDebug --stacktrace
-
       - name: Guardar APK
         uses: actions/upload-artifact@v4
         with:
-          name: BELSIPERU-APK
+          name: BELSIPERU-V1.18-APK-PRUEBA
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
