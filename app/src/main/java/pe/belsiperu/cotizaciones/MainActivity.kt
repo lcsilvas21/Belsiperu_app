@@ -2107,18 +2107,35 @@ class MainActivity:Activity() {
     cardView.addView(line(currency+" "+String.format(Locale.US,"%,.2f",total)+
      " · "+count+" producto(s)"+(if(withPhoto)" · Con fotos" else ""),
      16f,green,true))
-    val export=line("Exportar PDF",14f,green,true).apply{
-     setPadding(d(8),d(12),d(8),d(12))
-     isClickable=true;isFocusable=true;setOnClickListener{pdfOptions(quoteId)}
+    // Acciones con fondo, altura táctil y contraste real: no parecen mensajes.
+    val actions=LinearLayout(this@MainActivity).apply{
+     orientation=LinearLayout.HORIZONTAL
+     gravity=Gravity.CENTER_VERTICAL
+     setPadding(0,d(8),0,d(2))
     }
-    cardView.addView(export)
-    if(status=="PENDIENTE"){
-     val sale=line("Confirmar venta",14f,green,true).apply{
-      setPadding(d(8),d(12),d(8),d(12))
-      isClickable=true;isFocusable=true;setOnClickListener{confirm(quoteId)}
+    fun actionButton(text:String,color:Int,description:String,onTap:()->Unit){
+     val control=line(text,13f,Color.WHITE,true).apply{
+      gravity=Gravity.CENTER
+      minHeight=d(52)
+      setPadding(d(6),d(12),d(6),d(12))
+      background=round(color,12)
+      elevation=d(2).toFloat()
+      isClickable=true
+      isFocusable=true
+      contentDescription=description
+      setOnClickListener{onTap()}
      }
-     cardView.addView(sale)
+     actions.addView(control,LinearLayout.LayoutParams(0,-2,1f).apply{
+      setMargins(d(3),d(3),d(3),d(3))
+     })
     }
+    actionButton("Exportar PDF",navy,
+     "Exportar PDF de la cotización "+quoteId){pdfOptions(quoteId)}
+    if(status=="PENDIENTE"){
+     actionButton("Confirmar venta",green,
+      "Confirmar venta de la cotización "+quoteId){confirm(quoteId)}
+    }
+    cardView.addView(actions)
     body.addView(cardView,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(6),0,d(8))})
    }
   }finally{c.close()}
@@ -2223,8 +2240,59 @@ class MainActivity:Activity() {
   label("Tamaño de papel")
   val paper=choice(listOf("Carta vertical","A4 vertical","A4 horizontal","A5 vertical","A5 horizontal","Ticket 80 mm"))
   label("Vencimiento de la proforma (dd/MM/aaaa, opcional)")
-  val expiry=input("Ejemplo: 30/11/2026")
+  val expiry=input("Toca aquí para elegir una fecha")
+  // El campo entero y el ícono abren el calendario. No hace falta teclear.
+  body.removeView(expiry)
   expiry.setText(pdfExpiry)
+  expiry.isFocusable=false
+  expiry.isFocusableInTouchMode=false
+  expiry.isClickable=true
+  expiry.keyListener=null
+  expiry.contentDescription="Seleccionar vencimiento desde el calendario"
+  val expiryRow=LinearLayout(this).apply{
+   orientation=LinearLayout.HORIZONTAL
+   gravity=Gravity.CENTER_VERTICAL
+  }
+  val expiryParams=LinearLayout.LayoutParams(0,-2,1f)
+  expiryRow.addView(expiry,expiryParams)
+  val openCalendar={
+   val selectedDate=Calendar.getInstance()
+   val savedDate=expiry.text.toString().trim()
+   if(savedDate.isNotEmpty()){
+    val parser=SimpleDateFormat("dd/MM/yyyy",Locale("es","PE")).apply{isLenient=false}
+    runCatching{parser.parse(savedDate)}.getOrNull()?.let{selectedDate.time=it}
+   }
+   DatePickerDialog(this@MainActivity,{_,year,month,day->
+    expiry.setText(String.format(Locale("es","PE"),"%02d/%02d/%04d",
+     day,month+1,year))
+   },selectedDate.get(Calendar.YEAR),selectedDate.get(Calendar.MONTH),
+    selectedDate.get(Calendar.DAY_OF_MONTH)).show()
+  }
+  expiry.setOnClickListener{openCalendar()}
+  val calendarIcon=line("📅",21f,green,true).apply{
+   gravity=Gravity.CENTER
+   minHeight=d(50)
+   contentDescription="Abrir calendario de vencimiento"
+   background=round(Color.WHITE,12,border)
+   isClickable=true
+   isFocusable=true
+   setOnClickListener{openCalendar()}
+  }
+  expiryRow.addView(calendarIcon,LinearLayout.LayoutParams(d(54),d(50)).apply{
+   setMargins(d(8),0,0,0)
+  })
+  body.addView(expiryRow,LinearLayout.LayoutParams(-1,-2).apply{
+   setMargins(0,d(3),0,d(4))
+  })
+  val clearExpiry=line("Quitar fecha de vencimiento",12f,green,true).apply{
+   isClickable=true
+   isFocusable=true
+   minHeight=d(36)
+   gravity=Gravity.CENTER_VERTICAL
+   contentDescription="Quitar vencimiento; la fecha es opcional"
+   setOnClickListener{expiry.setText("")}
+  }
+  body.addView(clearExpiry)
   label("Responsable")
   val seller=input("Usuario o vendedor")
   seller.setText(pdfSeller)
@@ -2232,9 +2300,17 @@ class MainActivity:Activity() {
   val payment=input("CONTADO / CRÉDITO")
   payment.setText(pdfPayment)
   button("Generar PDF"){
+   val dateText=expiry.text.toString().trim()
+   if(dateText.isNotEmpty()){
+    val parser=SimpleDateFormat("dd/MM/yyyy",Locale("es","PE")).apply{isLenient=false}
+    if(runCatching{parser.parse(dateText)}.getOrNull()==null){
+     toast("Selecciona una fecha válida desde el calendario.")
+     return@button
+    }
+   }
    pdfStyle=style.selectedItem.toString()
    pdfPaper=paper.selectedItem.toString()
-   pdfExpiry=expiry.text.toString().trim()
+   pdfExpiry=dateText
    pdfSeller=seller.text.toString().trim().ifEmpty{"BELSIPERU"}
    pdfPayment=payment.text.toString().trim().ifEmpty{"CONTADO"}
    exportPdf(id)
