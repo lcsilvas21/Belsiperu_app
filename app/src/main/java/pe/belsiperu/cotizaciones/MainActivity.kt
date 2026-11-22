@@ -137,7 +137,7 @@ class MainActivity:Activity() {
   names.addView(line(if(login)"Acceso seguro" else title,19f,Color.WHITE,true))
   names.addView(line("FERRETERÍA  •  COTIZACIONES  •  INVENTARIO",9f,Color.rgb(207,230,232)))
   top.addView(names);outer.addView(top)
-  val scroll=ScrollView(this).apply{setBackgroundColor(pale);fillViewport=true}
+  val scroll=ScrollView(this).apply{setBackgroundColor(pale);isFillViewport=true}
   body=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(d(17),d(16),d(17),d(25))}
   scroll.addView(body)
   outer.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
