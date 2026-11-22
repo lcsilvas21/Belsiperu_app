@@ -319,7 +319,7 @@ class MainActivity:Activity() {
   heading("Resumen del negocio")
   val q=queryCount("SELECT COUNT(*) FROM quotes")
   val p=queryCount("SELECT COUNT(*) FROM products")
-  val low=queryCount("SELECT COUNT(*) FROM products WHERE kind='PRODUCTO' AND stock<=min_stock")
+  val low=queryCount("SELECT COUNT(*) FROM products WHERE kind='PRODUCTO' AND min_stock>0 AND stock<=min_stock")
   tileRow(tile(q.toString()+" cotizaciones","Historial guardado",android.R.drawable.ic_menu_edit){quotes()},tile(p.toString()+" productos","En catálogo",android.R.drawable.ic_menu_agenda){products()})
   if(low>0)info("Atención: "+low+" producto(s) con stock bajo","Revisa Inventario para reponer existencias.",Color.rgb(169,105,19))
   button("⚙  Configuración"){settings()}
@@ -356,7 +356,7 @@ class MainActivity:Activity() {
   val q=queryCount("SELECT COUNT(*) FROM quotes")
   val sold=queryCount("SELECT COUNT(*) FROM quotes WHERE status='VENDIDA'")
   val units=queryCount("SELECT COALESCE(SUM(stock),0) FROM products WHERE kind='PRODUCTO'")
-  val low=queryCount("SELECT COUNT(*) FROM products WHERE kind='PRODUCTO' AND stock<=min_stock")
+  val low=queryCount("SELECT COUNT(*) FROM products WHERE kind='PRODUCTO' AND min_stock>0 AND stock<=min_stock")
   info("Cotizaciones",q.toString()+" registros")
   info("Ventas confirmadas",sold.toString()+" operaciones")
   info("Unidades en stock",units.toString()+" unidades")
@@ -588,7 +588,7 @@ class MainActivity:Activity() {
        String.format(Locale.US,"%,.2f",price),17f,green,true))
      details.addView(line(if(kind=="SERVICIO")"Servicio — sin stock físico" else
        ("Stock: "+currentStock+" "+unit.lowercase(Locale.ROOT)+
-        if(currentStock<=min)" · Bajo mínimo" else ""),12f,muted))
+        if(min>0&&currentStock<=min)" · Bajo mínimo" else ""),12f,muted))
      row.addView(details,LinearLayout.LayoutParams(0,-2,1f))
      entry.addView(row)
      val actions=LinearLayout(this@MainActivity).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.END}
@@ -701,7 +701,7 @@ class MainActivity:Activity() {
    salePrice.setText(previous("price","0.00"))
    saleIgV=CheckBox(this@MainActivity).apply{
     text="Precio de venta incluye IGV 18 %"
-    isChecked=bool("sale_includes_igv")
+    isChecked=if(editId==null)true else bool("sale_includes_igv")
    }
    body.addView(saleIgV)
    label("Precio de compra")
@@ -709,7 +709,7 @@ class MainActivity:Activity() {
    purchasePrice.setText(previous("purchase_price","0.00"))
    purchaseIgV=CheckBox(this@MainActivity).apply{
     text="Precio de compra incluye IGV 18 %"
-    isChecked=bool("purchase_includes_igv")
+    isChecked=if(editId==null)true else bool("purchase_includes_igv")
    }
    body.addView(purchaseIgV)
   }
