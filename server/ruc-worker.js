@@ -2,7 +2,8 @@
  * BELSIPERU — pasarela privada para consulta de RUC en endpoint.pe.
  * Cloudflare Worker: configurar ENDPOINT_PE_API_KEY y APP_ACCESS_CODE
  * como secretos en el panel de Cloudflare, nunca en el repositorio.
- * La app hace GET /ruc/NNNNNNNNNNN con X-Belsiperu-Access.
+ * La app hace GET /ruc/NNNNNNNNNNN o GET /dni/NNNNNNNN.
+ * Ambas peticiones usan X-Belsiperu-Access y la misma clave secreta de endpoint.pe.
  */
 function respuesta(json, status) {
   return new Response(JSON.stringify(json), {
@@ -38,12 +39,16 @@ export default {
       return respuesta({ success: false, message: "No autorizado." }, 401);
     }
     const url = new URL(request.url);
-    const match = /^\/ruc\/([0-9]{11})$/.exec(url.pathname);
-    if (!match) {
-      return respuesta({ success: false, message: "Ruta incorrecta o RUC inválido." }, 422);
+    const route = /^\/(ruc|dni)\/([0-9]+)$/.exec(url.pathname);
+    if (!route ||
+        (route[1] === "ruc" && !/^[0-9]{11}$/.test(route[2])) ||
+        (route[1] === "dni" && !/^[0-9]{8}$/.test(route[2]))) {
+      return respuesta({ success: false, message: "Ruta incorrecta: el RUC debe tener 11 dígitos y el DNI 8." }, 422);
     }
+    const tipo = route[1];
+    const documento = route[2];
     try {
-      const upstream = await fetch("https://api.endpoint.pe/v1/ruc/" + match[1], {
+      const upstream = await fetch("https://api.endpoint.pe/v1/" + tipo + "/" + documento, {
         method: "GET",
         headers: {
           Authorization: "Bearer " + env.ENDPOINT_PE_API_KEY,
@@ -62,11 +67,33 @@ export default {
         }, upstream.status === 200 ? 502 : upstream.status);
       }
       const data = body.data || {};
+      if (tipo === "dni") {
+        const nombreCompleto = typeof data.nombre_completo === "string"
+          ? data.nombre_completo.trim() : "";
+        const nombres = typeof data.nombres === "string" ? data.nombres.trim() : "";
+        const paterno = typeof data.apellido_paterno === "string" ? data.apellido_paterno.trim() : "";
+        const materno = typeof data.apellido_materno === "string" ? data.apellido_materno.trim() : "";
+        const nombre = nombreCompleto || [nombres, paterno, materno].filter(Boolean).join(" ");
+        if (!nombre) return respuesta({ success: false, message: "La consulta no devolvió nombres." }, 502);
+        return respuesta({
+          success: true,
+          message: "Consulta exitosa",
+          data: {
+            dni: documento,
+            nombres,
+            apellido_paterno: paterno,
+            apellido_materno: materno,
+            nombre_completo: nombre,
+            digito_verificador: data.digito_verificador || "",
+            ruc: typeof data.ruc === "string" ? data.ruc : null,
+          },
+        }, 200);
+      }
       return respuesta({
         success: true,
         message: "Consulta exitosa",
         data: {
-          ruc: String(data.ruc || match[1]),
+          ruc: String(data.ruc || documento),
           razon_social: data.razon_social || "",
           direccion: data.direccion || "",
           direccion_completa: data.direccion_completa || data.direccion || "",

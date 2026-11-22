@@ -26,3 +26,17 @@ Documentación oficial:
 - https://endpoint.pe/docs/buenas-practicas
 
 El servicio puede cobrar por consultas o limitar el uso según el plan contratado.
+
+
+## Consulta DNI (versión 1.6)
+
+El mismo Cloudflare Worker y los mismos secretos que ya usan las consultas RUC sirven para DNI. Se debe **reemplazar el código del Worker publicado** por el archivo `server/ruc-worker.js` actualizado en la rama `feat/consulta-dni-automatico`; crear la APK no despliega cambios a Cloudflare.
+
+- RUC: `GET /ruc/{11_digitos}` → razón social y dirección fiscal.
+- DNI: `GET /dni/{8_digitos}` → nombre completo, nombres y apellidos, dígito verificador y RUC opcional.
+- Ambas rutas requieren la cabecera `X-Belsiperu-Access` y reutilizan `ENDPOINT_PE_API_KEY` y `APP_ACCESS_CODE`.
+- En la aplicación, abrir **Clientes**, ingresar DNI de 8 dígitos y tocar **Consultar DNI**. El nombre se completa, pero la dirección no se obtiene con esa API. No se registra nada hasta tocar **Guardar cliente**.
+- No pegar claves en archivos fuente ni enviar datos personales al chat.
+- El servicio de DNI de endpoint.pe requiere una finalidad legítima y observar la Ley N.° 29733.
+
+Referencia: https://endpoint.pe/docs/apis/dni
