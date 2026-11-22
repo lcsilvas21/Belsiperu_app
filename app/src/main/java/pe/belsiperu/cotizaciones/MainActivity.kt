@@ -1065,62 +1065,70 @@ class MainActivity:Activity() {
   body.addView(status)
   val name=input("Nombre o razón social")
   val addr=input("Dirección fiscal / dirección del cliente")
-  button("Consultar RUC"){
-   val ruc=doc.text.toString().trim()
-   if(!ruc.matches(Regex("[0-9]{11}"))){
-    status.text="Ingresa un RUC de 11 dígitos."
-    return@button
+  // La detección es automática: 8 dígitos = DNI, 11 dígitos = RUC.
+  // Solo se realiza la consulta cuando se presiona el botón.
+  doc.addTextChangedListener(object:TextWatcher{
+   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){
+    val value=s?.toString()?.trim().orEmpty()
+    status.text=when{
+     value.matches(Regex("[0-9]{8}"))->"DNI detectado (8 dígitos). Presiona Consultar documento."
+     value.matches(Regex("[0-9]{11}"))->"RUC detectado (11 dígitos). Presiona Consultar documento."
+     value.isEmpty()->"Ingresa 8 dígitos para DNI u 11 dígitos para RUC."
+     else->"Documento incompleto: el DNI requiere 8 dígitos y el RUC 11."
+    }
    }
-   status.text="Consultando RUC…"
-   consultaRuc(ruc){data,error->
-    if(data!=null){
-     if(doc.text.toString().trim()!=ruc){
-      status.text="El documento cambió durante la consulta. Vuelve a consultar."
-     }else{
-      name.setText(data.razon)
-      addr.setText(data.direccion)
-      status.text="SUNAT: ${data.estado.ifBlank{"Sin estado"}} · ${data.condicion.ifBlank{"Sin condición"}}. Verifica y guarda los datos."
-      if(data.estado.uppercase(Locale.ROOT)!="ACTIVO"){
-       AlertDialog.Builder(this).setTitle("Estado del contribuyente")
-        .setMessage("El RUC figura como ${data.estado}. Comprueba su situación antes de utilizarlo.")
-        .setPositiveButton("Entendido",null).show()
+   override fun afterTextChanged(s:Editable?){}
+  })
+  button("Consultar documento"){
+   val documento=doc.text.toString().trim()
+   when{
+    documento.matches(Regex("[0-9]{8}"))->{
+     status.text="Consultando DNI…"
+     consultaDni(documento){data,error->
+      if(doc.text.toString().trim()!=documento){
+       status.text="El documento cambió durante la consulta. Vuelve a consultar."
+      }else if(data!=null){
+       name.setText(data.nombre)
+       // La consulta de DNI no proporciona dirección; preservar el dato manual.
+       status.text="DNI consultado: nombre completo obtenido. La dirección se ingresa manualmente."
+      }else{
+       status.text=error?:"No se pudo consultar el DNI."
+       if(error?.contains("Configura primero")==true){
+        AlertDialog.Builder(this).setTitle("Activar consulta de documentos")
+         .setMessage("Configura la conexión con Cloudflare para consultar RUC y DNI. Puedes guardar clientes manualmente.")
+         .setNegativeButton("Después",null)
+         .setPositiveButton("Configurar"){_,_->rucSettings()}.show()
+       }
       }
      }
-    }else{
-     status.text=error?:"No se pudo consultar el RUC."
-     if(error?.contains("Configura primero")==true){
-      AlertDialog.Builder(this).setTitle("Activar consulta RUC")
-       .setMessage("Para consultar RUC debes configurar el servicio seguro. Puedes guardar clientes manualmente.")
-       .setNegativeButton("Después",null)
-       .setPositiveButton("Configurar"){_,_->rucSettings()}.show()
+    }
+    documento.matches(Regex("[0-9]{11}"))->{
+     status.text="Consultando RUC…"
+     consultaRuc(documento){data,error->
+      if(doc.text.toString().trim()!=documento){
+       status.text="El documento cambió durante la consulta. Vuelve a consultar."
+      }else if(data!=null){
+       name.setText(data.razon)
+       addr.setText(data.direccion)
+       status.text="RUC consultado: ${data.estado.ifBlank{"Sin estado"}} · ${data.condicion.ifBlank{"Sin condición"}}. Verifica y guarda los datos."
+       if(data.estado.uppercase(Locale.ROOT)!="ACTIVO"){
+        AlertDialog.Builder(this).setTitle("Estado del contribuyente")
+         .setMessage("El RUC figura como ${data.estado}. Comprueba su situación antes de utilizarlo.")
+         .setPositiveButton("Entendido",null).show()
+       }
+      }else{
+       status.text=error?:"No se pudo consultar el RUC."
+       if(error?.contains("Configura primero")==true){
+        AlertDialog.Builder(this).setTitle("Activar consulta de documentos")
+         .setMessage("Configura la conexión con Cloudflare para consultar RUC y DNI. Puedes guardar clientes manualmente.")
+         .setNegativeButton("Después",null)
+         .setPositiveButton("Configurar"){_,_->rucSettings()}.show()
+       }
+      }
      }
     }
-   }
-  }
-  button("Consultar DNI"){
-   val dni=doc.text.toString().trim()
-   if(!dni.matches(Regex("[0-9]{8}"))){
-    status.text="Ingresa un DNI de 8 dígitos."
-    return@button
-   }
-   status.text="Consultando DNI…"
-   consultaDni(dni){data,error->
-    if(data!=null){
-     if(doc.text.toString().trim()!=dni){
-      status.text="El documento cambió durante la consulta. Vuelve a consultar."
-     }else{
-      name.setText(data.nombre)
-      status.text="RENIEC: nombre completo obtenido. La API no proporciona dirección; complétala manualmente si es necesario."
-     }
-    }else{
-     status.text=error?:"No se pudo consultar el DNI."
-     if(error?.contains("Configura primero")==true){
-      AlertDialog.Builder(this).setTitle("Activar consulta DNI")
-       .setMessage("Configura la conexión con Cloudflare para consultar RUC y DNI. Puedes guardar clientes manualmente.")
-       .setNegativeButton("Después",null)
-       .setPositiveButton("Configurar"){_,_->rucSettings()}.show()
-     }
-    }
+    else->status.text="Ingresa un DNI de 8 dígitos o un RUC de 11 dígitos."
    }
   }
   button("Guardar cliente"){

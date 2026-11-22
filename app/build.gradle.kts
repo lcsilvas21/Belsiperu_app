@@ -11,14 +11,14 @@ android {
         applicationId = "pe.belsiperu.cotizaciones"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.6"
+        versionCode = 15
+        versionName = "1.7"
     }
 
-    // Prueba de DNI con identificador propio: no reemplaza otra APK de desarrollo ni borra sus datos.
+    // APK de prueba independiente para no sobreescribir la instalación y datos actuales.
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".dni"
+            applicationIdSuffix = ".autodoc"
             versionNameSuffix = "-prueba"
         }
     }
