@@ -3665,7 +3665,9 @@ class MainActivity:Activity() {
     canvas.drawPath(angle,paint)
     // Logo transparente, ampliado sobre el panel naranja; sin caja blanca.
     drawCompanyLogo(canvas,RectF(margin+2f,22f,margin+123f,86f),true)
-    val x=margin+130f
+    // Deja el nombre, rubro y RUC íntegramente sobre el fondo azul,
+    // sin invadir el trapecio naranja ni el espacio del logotipo.
+    val x=maxOf(w*0.32f,margin+147f)
     clipped(config.legal,x,43f,w-margin-x,if(compact)12f else 16f,true,Color.WHITE)
     clipped(config.business.ifBlank{"Herramientas y maquinaria industrial"},
      x,61f,w-margin-x,if(compact)7f else 8.5f,false,Color.WHITE)
@@ -3762,8 +3764,9 @@ class MainActivity:Activity() {
     rect(margin,h-43f,w-margin,h-41.5f,inkColor)
     textCenter(config.legal+"  |  RUC "+config.ruc,
      w/2f,h-30f,8f,true,inkColor)
-    clipped(config.commercial.ifBlank{config.legal},margin,h-18f,cw*0.36f,
-     6.9f,true,subdued)
+    // El visor del teléfono coloca su 1/1 en la esquina inferior derecha.
+    // Evitar superponer una segunda cifra en esa misma zona.
+    text("Página "+pageNumber,margin+3f,h-17f,7f,true,subdued)
    }else{
     // Pie comercial propio de FULLTRADE con líneas discontinuas y firmas.
     val dashColor=Color.rgb(85,88,93)
@@ -3787,7 +3790,11 @@ class MainActivity:Activity() {
    }
    textCenter("Proforma comercial · No es comprobante de pago electrónico",
     w/2f,h-12f,6.5f,false,subdued)
-   textRight("Página "+pageNumber,w-margin,h-12f,6f,false,subdued)
+   if(!modern){
+    // Numeración propia en el margen inferior izquierdo; separada del
+    // contador superpuesto por el lector PDF de Android.
+    text("Página "+pageNumber,margin+3f,h-17f,7f,true,subdued)
+   }
    pdf.finishPage(page)
   }
   fun ensureSpace(required:Float){
@@ -3808,9 +3815,14 @@ class MainActivity:Activity() {
     val brandLines=pdfTextLines(listOf(item.brand,item.unit).filter{it.isNotBlank()}
      .joinToString(" · "),descWidth,tableFont-0.7f,3)
     val showPicture=item.includePhoto&&!item.photoUri.isNullOrBlank()
-    val photoHeight=if(showPicture)35f else 0f
+    // La foto pasa de 43x33 pt a hasta 110x78 pt (con proporción preservada).
+    // Reservamos la altura real para que no choque con la fila siguiente.
+    val imageWidth=minOf((descWidth-4f).coerceAtLeast(28f),
+     if(compact)88f else 110f)
+    val imageHeight=if(compact)64f else 78f
+    val photoHeight=if(showPicture)imageHeight+8f else 0f
     val discountHeight=if(item.discountPct>0.0||item.discountAmount>0.0)10f else 0f
-    val rowHeight=maxOf(38f,10f+detailLines.size*10f+
+    val rowHeight=maxOf(38f,18f+detailLines.size*10f+
      brandLines.size*9f+photoHeight+discountHeight)
     ensureSpace(rowHeight+5f)
     val top=y
@@ -3852,7 +3864,8 @@ class MainActivity:Activity() {
      descY+=10f
     }
     if(showPicture){
-     drawPhoto(item.photoUri,RectF(descX,descY+1f,descX+43f,descY+34f))
+     drawPhoto(item.photoUri,RectF(descX,descY+2f,
+      descX+imageWidth,descY+2f+imageHeight))
     }
     y=top+rowHeight
     horizontal(y)
