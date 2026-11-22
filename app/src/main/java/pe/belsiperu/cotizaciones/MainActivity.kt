@@ -974,51 +974,129 @@ class MainActivity:Activity() {
   }
   c.close()
  }
+
  private fun newQuote(){
   screen("Nueva cotización");button("← Inicio"){home()}
   val clients=mutableListOf("Cliente general")
   val cc=db.readableDatabase.rawQuery("SELECT name FROM clients ORDER BY name",null)
-  while(cc.moveToNext())clients.add(cc.getString(0));cc.close()
+  try{while(cc.moveToNext())clients.add(cc.getString(0))}finally{cc.close()}
   label("Cliente");val client=choice(clients)
-  val names=mutableListOf<String>();val ids=mutableListOf<Long>();val prices=mutableListOf<Double>();val currencies=mutableListOf<String>()
-  val c=db.readableDatabase.rawQuery("SELECT id,name,price,currency FROM products ORDER BY name",null)
-  while(c.moveToNext()){ids.add(c.getLong(0));names.add(c.getString(1));prices.add(c.getDouble(2));currencies.add(c.getString(3))};c.close()
-  if(names.isEmpty()){label("Primero registra un producto.");button("Ir a productos"){products()};return}
-  label("Producto");val product=choice(names)
-  val qty=input("Cantidad",true);val price=input("Precio de venta (opcional)",true)
+  val names=mutableListOf<String>()
+  val ids=mutableListOf<Long>()
+  val prices=mutableListOf<Double>()
+  val currencies=mutableListOf<String>()
+  val includedTax=mutableListOf<Boolean>()
+  val taxTypes=mutableListOf<String>()
+  val c=db.readableDatabase.rawQuery(
+   "SELECT id,name,price,currency,sale_includes_igv,tax_affectation FROM products ORDER BY name",null)
+  try{while(c.moveToNext()){
+   ids.add(c.getLong(0))
+   names.add(c.getString(1))
+   prices.add(c.getDouble(2))
+   currencies.add(c.getString(3)?:"PEN")
+   includedTax.add(c.getInt(4)==1)
+   taxTypes.add(c.getString(5)?:"GRAVADO")
+  }}finally{c.close()}
+  if(names.isEmpty()){
+   label("Primero registra un producto o servicio.")
+   button("Ir al catálogo"){products()}
+   return
+  }
+  label("Producto o servicio");val product=choice(names)
+  label("Variante de precio")
+  val priceOptions=mutableListOf("Precio de venta")
+  val variantPrices=mutableListOf<Double>()
+  val priceAdapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,priceOptions)
+  val variantChoice=Spinner(this).apply{adapter=priceAdapter}
+  body.addView(variantChoice)
+  val qty=input("Cantidad",true)
+  val price=input("Precio unitario sin IGV (editable)",true)
   val discount=input("Descuento en %",true)
   val fixedDiscount=input("Descuento adicional en monto",true)
+  label("Moneda de cotización")
   val currency=choice(listOf("PEN","USD"))
   val fx=input("Tipo de cambio: soles por dólar",true);fx.setText("3.75")
-  val igv=CheckBox(this).apply{text="Agregar IGV 18 % (precios sin IGV)";isChecked=false};body.addView(igv)
+  val igv=CheckBox(this).apply{text="Aplicar IGV 18 % al precio sin IGV";isChecked=false}
+  body.addView(igv)
+  val taxNote=line("",12f,muted)
+  body.addView(taxNote)
+  fun updateQuotePrice(){
+   val index=product.selectedItemPosition
+   if(index !in ids.indices)return
+   val priceSelected=if(variantChoice.selectedItemPosition==0)prices[index]
+    else variantPrices.getOrNull(variantChoice.selectedItemPosition-1)?:prices[index]
+   val net=if(includedTax[index]&&taxTypes[index]=="GRAVADO")priceSelected/1.18 else priceSelected
+   price.setText(String.format(Locale.US,"%.4f",net))
+  }
+  fun updateQuoteProduct(){
+   val index=product.selectedItemPosition
+   if(index !in ids.indices)return
+   priceOptions.clear();priceOptions.add("Precio de venta")
+   variantPrices.clear()
+   val cr=db.readableDatabase.rawQuery(
+    "SELECT label,price FROM product_price_variants WHERE product_id=? ORDER BY id",
+    arrayOf(ids[index].toString()))
+   try{while(cr.moveToNext()){
+    priceOptions.add(cr.getString(0)?:"Variante")
+    variantPrices.add(cr.getDouble(1))
+   }}finally{cr.close()}
+   priceAdapter.notifyDataSetChanged()
+   variantChoice.setSelection(0)
+   currency.setSelection(if(currencies[index]=="USD")1 else 0)
+   igv.isChecked=taxTypes[index]=="GRAVADO"
+   igv.isEnabled=taxTypes[index]=="GRAVADO"
+   taxNote.text=when(taxTypes[index]){
+    "EXONERADO"->"Producto exonerado del IGV según la ficha."
+    "INAFECTO"->"Producto inafecto al IGV según la ficha."
+    else->if(includedTax[index])"Precio del catálogo incluye IGV: se descontó el impuesto del valor editable." else
+      "Producto gravado: la aplicación calculará IGV 18 %."
+   }
+   updateQuotePrice()
+  }
+  variantChoice.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
+   override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
+   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){updateQuotePrice()}
+  }
   product.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
    override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
-   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){price.setText(prices[position].toString());currency.setSelection(if(currencies[position]=="USD")1 else 0)}
+   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){updateQuoteProduct()}
   }
   button("Guardar cotización"){
-   val i=product.selectedItemPosition;val q=qty.text.toString().toIntOrNull()?:0
+   val i=product.selectedItemPosition
+   if(i !in ids.indices){toast("Selecciona un producto");return@button}
+   val q=qty.text.toString().toIntOrNull()?:0
    val rate=fx.text.toString().toDoubleOrNull()?:0.0
    if(q<=0 || rate<=0){toast("Revisa cantidad y tipo de cambio");return@button}
-   val base=price.text.toString().toDoubleOrNull()?:prices[i]
+   val base=price.text.toString().toDoubleOrNull()
+   if(base==null || !base.isFinite() || base<0){toast("Indica un precio unitario válido");return@button}
    val original=currencies[i];val target=currency.selectedItem.toString()
    val converted=if(original==target)base else if(original=="USD")base*rate else base/rate
    val d=(discount.text.toString().toDoubleOrNull()?:0.0).coerceIn(0.0,100.0)
    val fixed=(fixedDiscount.text.toString().toDoubleOrNull()?:0.0).coerceAtLeast(0.0)
    val subtotal=(q*converted*(1-d/100.0)-fixed).coerceAtLeast(0.0)
-   val total=subtotal*(if(igv.isChecked)1.18 else 1.0)
-   val photoCur=db.readableDatabase.rawQuery("SELECT photo_uri FROM products WHERE id=?",arrayOf(ids[i].toString()))
-   val photo=if(photoCur.moveToFirst())photoCur.getString(0) else null
-   photoCur.close()
+   val taxable=taxTypes[i]=="GRAVADO" && igv.isChecked
+   val total=subtotal*(if(taxable)1.18 else 1.0)
+   if(!total.isFinite()){toast("El total de cotización no es válido");return@button}
+   val photoCur=db.readableDatabase.rawQuery(
+    "SELECT photo_uri FROM products WHERE id=?",arrayOf(ids[i].toString()))
+   val photo=try{if(photoCur.moveToFirst())photoCur.getString(0) else null}
+    finally{photoCur.close()}
+   val effectiveTax=if(taxable)"GRAVADO" else if(taxTypes[i]=="GRAVADO")"INAFECTO" else taxTypes[i]
    val values=android.content.ContentValues().apply{
-    put("client",client.selectedItem.toString());put("product",names[i]);put("qty",q);put("unit_price",converted)
-    put("discount",d);put("igv",if(igv.isChecked)1 else 0);put("currency",target);put("total",total)
-    put("status","PENDIENTE");put("created",today());put("product_photo",photo);put("discount_amount",fixed)
+    put("client",client.selectedItem.toString());put("product",names[i])
+    put("product_id",ids[i]);put("qty",q);put("unit_price",converted)
+    put("discount",d);put("igv",if(taxable)1 else 0)
+    put("tax_affectation",effectiveTax)
+    put("currency",target);put("total",total)
+    put("status","PENDIENTE");put("created",today())
+    put("product_photo",photo);put("discount_amount",fixed)
    }
    val id=db.writableDatabase.insert("quotes",null,values)
-   toast("Cotización COT-${id.toString().padStart(6,'0')} guardada")
+   if(id<1){toast("No se pudo guardar la cotización");return@button}
+   toast("Cotización COT-"+id.toString().padStart(6,'0')+" guardada")
    quotes()
   }
-  label("Versión de desarrollo: una línea por cotización. Fotos, descuento fijo y formatos PDF disponibles; faltan varias líneas y maquetación avanzada.")
+  label("Esta versión de desarrollo permite una línea por cotización. Las variantes se aplican al precio unitario.")
  }
  private fun quotes(){
   screen("Cotizaciones");button("← Inicio"){home()}
