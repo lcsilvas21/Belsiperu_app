@@ -3121,6 +3121,7 @@ class MainActivity:Activity() {
  }
 
  private fun writePdfProforma(id:Long,out:java.io.OutputStream){
+  val company=companyInfo()
   if(pdfPaper=="A4 horizontal" || pdfPaper=="A5 horizontal" || pdfPaper=="Ticket 80 mm") {
    writePdfProformaAdaptada(id,out)
    return
@@ -3165,7 +3166,7 @@ class MainActivity:Activity() {
    val docTag=when(document.length){11->"RUC ";8->"DNI ";else->""}
    val money=if(currency=="USD")"US$" else "S/"
    val nameCurrency=if(currency=="USD")"DÓLARES" else "SOLES"
-   fun amount(n:Double)=String.format(Locale.US,"%,.2f",n)
+   fun amount(n:Double)=pdfNumber(n,company.decimals)
    val pdf=android.graphics.pdf.PdfDocument()
    // La carta conserva exactamente el diseño aprobado. A4 y A5 vertical
    // imprimen la misma maqueta con dimensiones físicas reales y escala uniforme.
@@ -3259,25 +3260,21 @@ class MainActivity:Activity() {
    val literal="SON "+words(cents/100)+" Y "+(cents%100).toString().padStart(2,'0')+"/100 "+nameCurrency
 
    // Encabezado: logotipo, razón social, dirección y recuadro de proforma.
-   try{
-    assets.open("belsiperu_logo.png").use{stream->
-     val bitmap=BitmapFactory.decodeStream(stream)
-     if(bitmap!=null){
-      canvas.drawBitmap(bitmap,null,RectF(15.05f,15.05f,109.11f,109.11f),Paint(Paint.ANTI_ALIAS_FLAG))
-      bitmap.recycle()
-     }
-    }
-   }catch(_:Exception){}
-   text("BELSIPERU S.A.C",116.6f,33.5f,13.2f,true)
-   fit("PRINCIPAL » JR. LOS TOPACIOS NRO. 2125 INT. T18",116.6f,51f,226f,8.47f)
-   fit("COO. LA HUAYRONA - LIMA LIMA SAN JUAN DE",116.6f,62.2f,226f,8.47f)
-   text("LURIGANCHO",116.6f,73.5f,8.47f)
-   text("LO MEJOR EN MAQUINAS Y HERRAMIENTAS",116.6f,93f,8.47f)
-   text("INDUSTRIALES PARA EL PERÚ",116.6f,104f,8.47f)
+   drawCompanyLogo(canvas,RectF(15.05f,15.05f,109.11f,109.11f))
+   fit(company.legal,116.6f,33.5f,226f,13.2f,true)
+   pdfTextLines(company.fiscal,226f,8.47f,3).forEachIndexed{i,value->
+    fit(value,116.6f,51f+i*11f,226f,8.47f)
+   }
+   // Dirección fiscal configurable en las líneas anteriores.
+   // No se inserta una dirección fija en la proforma.
+   pdfTextLines(company.header,226f,8.47f,2).forEachIndexed{i,value->
+    fit(value,116.6f,93f+i*11f,226f,8.47f)
+   }
+   // Cabecera editable desde Configuración → Impresión.
    rect(348.03f,44.21f,543.68f,74.31f,Color.rgb(238,238,238))
    line(347.09f,15.52f,544.62f,15.52f,0.94f);line(347.09f,103.0f,544.62f,103.0f,0.94f)
    line(347.56f,15.05f,347.56f,103.47f,0.94f);line(544.15f,15.05f,544.15f,103.47f,0.94f)
-   center("RUC 20605060634",347.09f,544.62f,35.7f,13.17f)
+   center("RUC "+company.ruc,347.09f,544.62f,35.7f,13.17f)
    center("PROFORMA",347.09f,544.62f,65.0f,15.05f,true)
    center("0002-"+id.toString().padStart(7,'0'),347.09f,544.62f,94f,13.17f)
    // Ficha cliente y emisión.
@@ -3379,19 +3376,21 @@ class MainActivity:Activity() {
    text("CUENTAS BANCARIAS",15.05f,588.4f,8.47f,true)
    fit(pdfSeller+" - "+curDate+" "+curTime,156.1f,564f,373f,8.47f)
    fit(pdfPayment,156.1f,576.2f,373f,8.47f)
-   text("BELSIPERU S.A.C",156.1f,588.4f,8.47f)
-   text("Cuenta Corriente Soles Interbank: 20030088110506",156.1f,613f,8.47f)
-   text("Interbancario Soles Interbank: 2003008810506",156.1f,624.3f,8.47f)
-   text("00320000300881050636",156.1f,635.6f,8.47f)
-   text("Cuenta Corriente Dólares Interbank: 2003008810513",156.1f,658.2f,8.47f)
-   text("Interbancario Dólares Interbank: 2003008810513",156.1f,669.5f,8.47f)
-   text("00320000300881051332",156.1f,680.8f,8.47f)
-   center("Los productos en Stock, la entrega será realizada dentro de las 48 Horas, salvo venta Previa.",15.05f,544.62f,710f,9.4f)
-   center("BELSIPERU",15.05f,544.62f,753f,11.3f,true)
+   fit(company.legal,156.1f,588.4f,370f,8.47f)
+   val singleBankLines=pdfTextLines(company.banks,365f,8f,300)
+   singleBankLines.take(9).forEachIndexed{i,value->
+    fit(value,156.1f,602f+i*9.8f,365f,8f)
+   }
+   pdfTextLines(company.footer,520f,8.4f,2).forEachIndexed{i,value->
+    fit(value,15.05f,710f+i*11f,520f,8.4f)
+   }
+   center(company.commercial.ifBlank{company.legal},15.05f,544.62f,753f,11.3f,true)
    center("Proforma comercial emitida mediante BELSIPERU. No constituye comprobante de pago electrónico.",15.05f,544.62f,766f,7.5f)
    canvas.restore()
    productPicture?.recycle()
    pdf.finishPage(page)
+   addBankContinuationPages(pdf,singleBankLines.drop(9),
+    pageSize.first,pageSize.second)
    try{pdf.writeTo(out)}finally{pdf.close()}
   }finally{c.close()}
  }
