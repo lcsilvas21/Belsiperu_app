@@ -11,6 +11,8 @@ import android.graphics.Typeface
 import android.view.Gravity
 import android.net.Uri
 import android.text.InputType
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.*
 import android.widget.*
 import java.text.SimpleDateFormat
@@ -68,6 +70,8 @@ class MainActivity:Activity() {
  private val border=Color.rgb(225,233,235)
  private var pendingPdf:Long?=null
  private var pendingPhotoProduct:Long?=null
+ private var pendingDraftPhotoUri:String?=null
+ private var draftPhotoPreview:ImageView?=null
  private var pdfPaper="Carta vertical"
  private var pdfStyle="Proforma BELSIPERU"
  private var pdfExpiry=""
@@ -448,6 +452,73 @@ class MainActivity:Activity() {
    runOnUiThread{if(!isFinishing)done(result,error)}
   }.start()
  }
+ private data class PriceVariant(val label:String,val price:Double)
+ private fun productSection(title:String,content:()->Unit){
+  val root=body
+  val section=card()
+  section.addView(line(title,18f,navy,true))
+  root.addView(section,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(9),0,d(9))})
+  body=section
+  try{content()}finally{body=root}
+ }
+ private fun suggestionField(hint:String,items:List<String>):AutoCompleteTextView{
+  val view=AutoCompleteTextView(this).apply{
+   this.hint=hint
+   textSize=15f
+   setTextColor(ink);setHintTextColor(muted)
+   setSingleLine(true)
+   minHeight=d(51)
+   setPadding(d(13),d(9),d(13),d(9))
+   background=round(Color.WHITE,12,border)
+   threshold=0
+   setAdapter(ArrayAdapter(this@MainActivity,android.R.layout.simple_dropdown_item_1line,items))
+   setOnClickListener{if(hasFocus())showDropDown()}
+  }
+  body.addView(view,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(6),0,d(6))})
+  return view
+ }
+ private fun catalogSuggestions(field:String):List<String>{
+  val defaults=when(field){
+   "category"->listOf("Amoladora","Taladro","Soldadora","Herramientas","Accesorios","Repuestos","Máquinas","Servicios")
+   "brand"->listOf("Bosch","Makita","DeWalt","Stanley","Truper","Total","Sin marca")
+   else->emptyList()
+  }
+  if(field!="category" && field!="brand")return defaults
+  val list=defaults.toMutableList()
+  val cursor=db.readableDatabase.rawQuery(
+   "SELECT DISTINCT "+field+" FROM products WHERE "+field+"<>'' ORDER BY "+field,null)
+  try{while(cursor.moveToNext()){
+   val value=cursor.getString(0)?:continue
+   if(list.none{it.equals(value,ignoreCase=true)})list.add(value)
+  }}finally{cursor.close()}
+  return list
+ }
+ private fun showProductImage(target:ImageView,rawUri:String?){
+  target.scaleType=ImageView.ScaleType.FIT_CENTER
+  if(rawUri.isNullOrBlank()){
+   target.setImageResource(android.R.drawable.ic_menu_gallery)
+   return
+  }
+  try{
+   val uri=Uri.parse(rawUri)
+   if(uri.scheme!="content"){target.setImageResource(android.R.drawable.ic_menu_gallery);return}
+   val options=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+   contentResolver.openInputStream(uri)?.use{BitmapFactory.decodeStream(it,null,options)}
+   if(options.outWidth<1||options.outHeight<1)throw IllegalArgumentException("Imagen vacía")
+   var sample=1
+   while(options.outWidth/sample>420 || options.outHeight/sample>420)sample*=2
+   val decoded=contentResolver.openInputStream(uri)?.use{
+    BitmapFactory.decodeStream(it,null,BitmapFactory.Options().apply{inSampleSize=sample})
+   }
+   if(decoded!=null)target.setImageBitmap(decoded)
+   else target.setImageResource(android.R.drawable.ic_menu_gallery)
+  }catch(_:Exception){
+   target.setImageResource(android.R.drawable.ic_menu_gallery)
+  }catch(_:OutOfMemoryError){
+   target.setImageResource(android.R.drawable.ic_menu_gallery)
+  }
+ }
+
  private fun products(){
   screen("Productos");button("← Inicio"){home()}
   val code=input("Código");val name=input("Descripción");val price=input("Precio base",true)
