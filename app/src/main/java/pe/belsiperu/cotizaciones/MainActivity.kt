@@ -2576,6 +2576,7 @@ class MainActivity:Activity() {
   val photoUri:String?,val includePhoto:Boolean
  )
  private fun writePdfMultiple(id:Long,out:java.io.OutputStream){
+  val company=companyInfo()
   val dbRead=db.readableDatabase
   val header=dbRead.rawQuery(
    "SELECT client,client_id,currency,total,created FROM quotes WHERE id=?",
@@ -2623,7 +2624,7 @@ class MainActivity:Activity() {
   val paint=Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
   val currencyMark=if(currency=="USD")"US$" else "S/"
   val labelColor=Color.rgb(18,52,90)
-  fun fmt(value:Double)=String.format(Locale.US,"%,.2f",value)
+  fun fmt(value:Double)=pdfNumber(value,company.decimals)
   fun font(size:Float,bold:Boolean=false,color:Int=Color.BLACK){
    paint.style=Paint.Style.FILL;paint.color=color;paint.textSize=size
    paint.typeface=Typeface.create(Typeface.DEFAULT,if(bold)Typeface.BOLD else Typeface.NORMAL)
@@ -2653,21 +2654,13 @@ class MainActivity:Activity() {
   fun rule(y:Float){fillRect(margin,y,width-margin,y+0.7f,Color.LTGRAY)}
   fun drawHeader():Float{
    val top=if(ticket)11f else 16f
-   if(!ticket){
-    try{
-     assets.open("belsiperu_logo.png").use{
-      val bitmap=BitmapFactory.decodeStream(it)
-      if(bitmap!=null){
-       drawProductImage(canvas,bitmap,RectF(margin,top,margin+73f,top+57f))
-       bitmap.recycle()
-      }
-     }
-    }catch(_:Exception){}
-   }
+   if(!ticket)drawCompanyLogo(canvas,RectF(margin,top,margin+73f,top+57f))
    val titleX=if(ticket)margin else margin+83f
-   text("BELSIPERU S.A.C.",titleX,top+17f,if(ticket)13f else 17f,true,labelColor)
-   text("RUC 20605060634",titleX,top+34f,if(ticket)9f else 10f)
-   text("PROFORMA 0002-"+id.toString().padStart(7,'0'),titleX,top+50f,if(ticket)9f else 11f,true)
+   fitted(company.legal,titleX,top+17f,width-titleX-margin,if(ticket)12f else 15f,true)
+   text("RUC "+company.ruc,titleX,top+34f,if(ticket)9f else 10f)
+   if(company.fiscal.isNotBlank())
+    fitted(company.fiscal,titleX,top+43f,width-titleX-margin,7f)
+   text("PROFORMA 0002-"+id.toString().padStart(7,'0'),titleX,top+55f,if(ticket)9f else 11f,true)
    rule(top+65f)
    fitted("CLIENTE: "+client,margin,top+82f,contentWidth,if(ticket)8f else 9f,true)
    text("DOC.: "+(if(document.isBlank())"—" else document),margin,top+98f,8.5f)
@@ -2712,9 +2705,13 @@ class MainActivity:Activity() {
   }
   var y=drawHeader()
   fun endPage(next:Boolean){
-   text("Proforma comercial. No constituye comprobante tributario.",margin,height-18f,
-    if(ticket)7f else 8f,false,labelColor)
-   if(!ticket)right("Página "+number,width-margin,height-18f,8f,false,labelColor)
+   val footerLines=pdfTextLines(company.footer,contentWidth,if(ticket)6.5f else 7.8f,2)
+   footerLines.forEachIndexed{i,value->
+    text(value,margin,height-42f+i*10f,if(ticket)6.5f else 7.8f,false,labelColor)
+   }
+   text("Proforma comercial. No constituye comprobante tributario.",margin,height-16f,
+    if(ticket)6f else 7f,false,labelColor)
+   if(!ticket)right("Página "+number,width-margin,height-16f,7f,false,labelColor)
    pdf.finishPage(page)
    if(next){
     number++
@@ -2772,6 +2769,23 @@ class MainActivity:Activity() {
    fitted("CONDICIÓN DE PAGO: "+pdfPayment,margin,y,contentWidth,8f)
    y+=14f
    fitted("RESPONSABLE: "+pdfSeller,margin,y,contentWidth,8f)
+   y+=14f
+   val headerLines=pdfTextLines(company.header,contentWidth,8f,3)
+   for(h in headerLines){
+    if(y+50f>height)endPage(true)
+    fitted(h,margin,y,contentWidth,8f);y+=11f
+   }
+   val bankLines=pdfTextLines(company.banks,contentWidth,if(ticket)7.2f else 8f,80)
+   if(bankLines.isNotEmpty()){
+    if(y+58f>height)endPage(true)
+    text("CUENTAS BANCARIAS",margin,y,9f,true,labelColor)
+    y+=14f
+    for(bank in bankLines){
+     if(y+47f>height)endPage(true)
+     fitted(bank,margin,y,contentWidth,if(ticket)7.2f else 8f)
+     y+=11f
+    }
+   }
    endPage(false)
    pdf.writeTo(out)
   }finally{pdf.close()}
