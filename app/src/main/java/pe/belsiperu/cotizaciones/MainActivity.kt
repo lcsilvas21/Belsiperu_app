@@ -1159,13 +1159,16 @@ class MainActivity:Activity() {
  }
  private fun quotes(){
   screen("Cotizaciones");button("← Inicio"){home()}
-  val c=db.readableDatabase.rawQuery("SELECT id,client,product,qty,total,currency,status FROM quotes ORDER BY id DESC",null)
-  while(c.moveToNext()){
-   val id=c.getLong(0);val status=c.getString(6)
-   label("COT-${id.toString().padStart(6,'0')} • $status\n${c.getString(1)}\n${c.getInt(3)} × ${c.getString(2)}\n${c.getString(5)} ${"%.2f".format(Locale.US,c.getDouble(4))}")
-   button("Exportar PDF COT-${id}"){pdfOptions(id)}
-   if(status=="PENDIENTE")button("Confirmar venta COT-${id}"){confirm(id)}
-  };c.close()
+  val c=db.readableDatabase.rawQuery("SELECT id,client,product,qty,total,currency,status,include_product_photo FROM quotes ORDER BY id DESC",null)
+  try{
+   while(c.moveToNext()){
+    val id=c.getLong(0);val status=c.getString(6)
+    val photoLabel=if(c.getInt(7)==1)"Con foto" else "Sin foto"
+    label("COT-${id.toString().padStart(6,'0')} • $status • $photoLabel\n${c.getString(1)}\n${c.getInt(3)} × ${c.getString(2)}\n${c.getString(5)} ${"%.2f".format(Locale.US,c.getDouble(4))}")
+    button("Exportar PDF COT-${id}"){pdfOptions(id)}
+    if(status=="PENDIENTE")button("Confirmar venta COT-${id}"){confirm(id)}
+   }
+  }finally{c.close()}
  }
 
  private fun confirm(id:Long){
