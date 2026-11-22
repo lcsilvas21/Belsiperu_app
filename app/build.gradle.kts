@@ -15,10 +15,10 @@ android {
         versionName = "1.6"
     }
 
-    // La aplicación de prueba se instala junto a la original.
+    // Prueba de DNI con identificador propio: no reemplaza otra APK de desarrollo ni borra sus datos.
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".fotoselect"
+            applicationIdSuffix = ".dni"
             versionNameSuffix = "-prueba"
         }
     }
