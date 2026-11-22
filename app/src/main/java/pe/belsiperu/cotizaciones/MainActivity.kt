@@ -2152,12 +2152,19 @@ class MainActivity:Activity() {
      isClickable=true;isFocusable=true
      setOnClickListener{picked.removeAt(i);refreshPicked()}
     }
+    val editControl=line("✎ Editar producto",13f,navy,true).apply{
+     setPadding(d(8),d(10),d(8),d(10))
+     isClickable=true;isFocusable=true
+     setOnClickListener{editPickedLine(i)}
+    }
+    entry.addView(editControl)
     entry.addView(remove)
     selectedList.addView(entry,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(5),0,d(7))})
    }
    totalView.text="TOTAL "+target+" "+money(total)
   }
-  fun openProduct(product:CatalogQuoteProduct){
+  fun openProduct(product:CatalogQuoteProduct,editIndex:Int?=null){
+   val existingLine=editIndex?.let{picked.getOrNull(it)}
    val form=LinearLayout(this).apply{
     orientation=LinearLayout.VERTICAL;setPadding(d(15),d(6),d(15),d(6))
    }
@@ -2184,25 +2191,29 @@ class MainActivity:Activity() {
      variants.map{it.first+" — "+money(it.second)})
    }
    form.addView(priceSpinner)
-   val qty=field("Cantidad", "1")
+   val qty=field("Cantidad",existingLine?.quantity?.toString()?:"1")
    qty.inputType=InputType.TYPE_CLASS_NUMBER
    val starting=if(product.saleIncludesIgv&&product.taxType=="GRAVADO")
     product.price/1.18 else product.price
    val price=field("Precio unitario sin IGV ("+product.currency+")",
-    String.format(Locale.US,"%.4f",starting))
+    String.format(Locale.US,"%.4f",existingLine?.netUnitPrice?:starting))
+   var chosenPriceVariant=editIndex==null
+   priceSpinner.setOnTouchListener{_,_->chosenPriceVariant=true;false}
    priceSpinner.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
     override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
     override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){
+     if(!chosenPriceVariant)return
      val nominal=variants[position].second
      val net=if(product.saleIncludesIgv&&product.taxType=="GRAVADO")nominal/1.18 else nominal
      price.setText(String.format(Locale.US,"%.4f",net))
     }
    }
-   val discount=field("Descuento (%)","0")
-   val amount=field("Descuento en monto ("+product.currency+")","0")
+   val discount=field("Descuento (%)",existingLine?.discountPct?.toString()?:"0")
+   val amount=field("Descuento en monto ("+product.currency+")",
+    existingLine?.discountAmount?.toString()?:"0")
    val applyIgv=CheckBox(this).apply{
     text="Aplicar IGV 18 %"
-    isChecked=product.taxType=="GRAVADO"
+    isChecked=existingLine?.applyIgv?: (product.taxType=="GRAVADO")
     isEnabled=product.taxType=="GRAVADO"
    }
    form.addView(applyIgv)
@@ -2210,7 +2221,7 @@ class MainActivity:Activity() {
     form.addView(line("Afectación: "+product.taxType+". No se aplicará IGV.",12f,muted))
    val photo=CheckBox(this).apply{
     text="Incluir fotografía del catálogo en el PDF"
-    isChecked=!product.photoUri.isNullOrBlank()
+    isChecked=existingLine?.includePhoto?:(!product.photoUri.isNullOrBlank())
     isEnabled=!product.photoUri.isNullOrBlank()
    }
    form.addView(photo)
@@ -2218,9 +2229,9 @@ class MainActivity:Activity() {
     "Producto sin foto registrada; se puede cotizar sin fotografía.",12f,muted))
    val scroll=ScrollView(this).apply{addView(form)}
    val dialog=AlertDialog.Builder(this)
-    .setTitle("Agregar "+product.name)
+    .setTitle((if(editIndex==null)"Agregar " else "Editar ")+product.name)
     .setView(scroll).setNegativeButton("Cancelar",null)
-    .setPositiveButton("Agregar",null).create()
+    .setPositiveButton(if(editIndex==null)"Agregar" else "Guardar cambios",null).create()
    dialog.setOnShowListener{
     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener{
      val quantity=qty.text.toString().toIntOrNull()
@@ -2232,18 +2243,23 @@ class MainActivity:Activity() {
        fixed==null||!fixed.isFinite()||fixed<0){
       toast("Comprueba cantidad, precio y descuentos.")
      }else{
-      picked.add(QuoteLineDraft(product,quantity,unitPrice,pct,fixed,
-       applyIgv.isChecked,photo.isChecked))
+      val updated=QuoteLineDraft(product,quantity,unitPrice,pct,fixed,
+       applyIgv.isChecked,photo.isChecked)
+      if(editIndex!=null && editIndex in picked.indices)picked[editIndex]=updated
+      else picked.add(updated)
       refreshPicked()
       dialog.dismiss()
       // Después de seleccionar un producto, cerrar la lista para evitar
       // mostrar todos los artículos mientras no se realiza otra búsqueda.
       productSearch.setText("")
-      toast("Producto añadido a la cotización")
+      toast(if(editIndex==null)"Producto añadido a la cotización" else "Producto actualizado")
      }
     }
    }
    dialog.show()
+  }
+  editPickedLine={index->
+   if(index in picked.indices)openProduct(picked[index].product,index)
   }
   fun renderProducts(){
    resultsList.removeAllViews()
