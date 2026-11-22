@@ -400,7 +400,7 @@ class MainActivity:Activity() {
   screen("Configuración")
   heading("BELSIPERU V2","Diseño marino, verde y dorado")
   info("Protección del PIN","El PIN actual es de prototipo: no guardes información sensible ni real hasta reforzar la seguridad.",Color.rgb(169,105,19))
-  button("Configurar consulta de RUC"){rucSettings()}
+  button("Configurar consulta RUC / DNI"){rucSettings()}
   button("Bloquear aplicación"){lock()}
   button("Volver al inicio"){home()}
  }
@@ -490,6 +490,73 @@ class MainActivity:Activity() {
     error="No se pudo encontrar el servidor de consulta."
    }catch(_:Exception){
     error="No fue posible realizar la consulta. Puedes ingresar el cliente manualmente."
+   }finally{connection?.disconnect()}
+   runOnUiThread{if(!isFinishing)done(result,error)}
+  }.start()
+ }
+
+ private data class DniDatos(val nombre:String)
+ private fun consultaDni(dni:String,done:(DniDatos?,String?)->Unit){
+  // Reutiliza la URL y el código de acceso existentes para la consulta RUC.
+  val prefs=getSharedPreferences("ruc_service",MODE_PRIVATE)
+  val base=prefs.getString("proxy_url","")?.trim()?.trimEnd('/')?:""
+  val access=prefs.getString("proxy_access","")?:""
+  if(base.isBlank() || access.length<16){
+   done(null,"Configura primero el servidor RUC y DNI.");return
+  }
+  val parsed=runCatching{Uri.parse(base)}.getOrNull()
+  if(parsed?.scheme!="https" || parsed.host.isNullOrBlank() || !parsed.userInfo.isNullOrBlank()){
+   done(null,"La dirección de consulta debe usar HTTPS.");return
+  }
+  if(!dni.matches(Regex("[0-9]{8}"))){
+   done(null,"Ingresa un DNI válido de 8 dígitos.");return
+  }
+  Thread{
+   var result:DniDatos?=null
+   var error:String?=null
+   var connection:HttpURLConnection?=null
+   try{
+    connection=URL(base+"/dni/"+dni).openConnection() as HttpURLConnection
+    connection.requestMethod="GET"
+    connection.connectTimeout=8000
+    connection.readTimeout=12000
+    connection.setRequestProperty("Accept","application/json")
+    connection.setRequestProperty("X-Belsiperu-Access",access)
+    connection.instanceFollowRedirects=false
+    val code=connection.responseCode
+    val stream=if(code in 200..299)connection.inputStream else connection.errorStream
+    val raw=stream?.bufferedReader(Charsets.UTF_8)?.use{it.readText()}?:""
+    if(code==200){
+     val payload=JSONObject(raw)
+     if(!payload.optBoolean("success",false)){
+      error=payload.optString("message","No se encontró información del DNI.")
+     }else{
+      val data=payload.optJSONObject("data")?:throw IllegalStateException("Respuesta incompleta.")
+      val full=data.optString("nombre_completo","").trim()
+      val parts=listOf(data.optString("nombres",""),
+       data.optString("apellido_paterno",""),data.optString("apellido_materno",""))
+      val fallback=parts.filter{it.isNotBlank()&&it!="null"}.joinToString(" ").trim()
+      val nombre=full.takeIf{it.isNotBlank()&&it!="null"}?:fallback
+      if(nombre.isBlank())throw IllegalStateException("No se recibieron nombres.")
+      result=DniDatos(nombre)
+     }
+    }else{
+     error=when(code){
+      400,422->"El DNI debe contener exactamente 8 dígitos."
+      401,403->"El servidor no está autorizado. Revisa el código de acceso."
+      402->"Tu cuenta de endpoint.pe no tiene créditos disponibles."
+      404->"No se encontró información para este DNI."
+      429->"Demasiadas consultas. Intenta más tarde."
+      in 500..599->"El servicio no está disponible temporalmente."
+      else->"No se pudo consultar el DNI. Código HTTP $code."
+     }
+    }
+   }catch(_:java.net.SocketTimeoutException){
+    error="La consulta tardó demasiado. Comprueba tu conexión."
+   }catch(_:java.net.UnknownHostException){
+    error="No se encontró el servidor de consulta."
+   }catch(_:Exception){
+    error="No fue posible consultar el DNI. Puedes ingresar el cliente manualmente."
    }finally{connection?.disconnect()}
    runOnUiThread{if(!isFinishing)done(result,error)}
   }.start()
@@ -989,12 +1056,12 @@ class MainActivity:Activity() {
 
  private fun clients(){
   screen("Clientes")
-  heading("Nuevo cliente","Consulta el RUC para completar automáticamente la razón social y la dirección.")
+  heading("Nuevo cliente","Consulta RUC o DNI para completar automáticamente la información del cliente.")
   label("Documento (RUC o DNI)")
   val doc=input("RUC de 11 dígitos / DNI de 8 dígitos")
   doc.inputType=InputType.TYPE_CLASS_NUMBER
   doc.filters=arrayOf(android.text.InputFilter.LengthFilter(11))
-  val status=line("La consulta RUC requiere configurar la conexión una sola vez.",12f,muted)
+  val status=line("Consulta RUC (11 dígitos) o DNI (8 dígitos) utilizando la misma conexión.",12f,muted)
   body.addView(status)
   val name=input("Nombre o razón social")
   val addr=input("Dirección fiscal / dirección del cliente")
@@ -1030,6 +1097,32 @@ class MainActivity:Activity() {
     }
    }
   }
+  button("Consultar DNI"){
+   val dni=doc.text.toString().trim()
+   if(!dni.matches(Regex("[0-9]{8}"))){
+    status.text="Ingresa un DNI de 8 dígitos."
+    return@button
+   }
+   status.text="Consultando DNI…"
+   consultaDni(dni){data,error->
+    if(data!=null){
+     if(doc.text.toString().trim()!=dni){
+      status.text="El documento cambió durante la consulta. Vuelve a consultar."
+     }else{
+      name.setText(data.nombre)
+      status.text="RENIEC: nombre completo obtenido. La API no proporciona dirección; complétala manualmente si es necesario."
+     }
+    }else{
+     status.text=error?:"No se pudo consultar el DNI."
+     if(error?.contains("Configura primero")==true){
+      AlertDialog.Builder(this).setTitle("Activar consulta DNI")
+       .setMessage("Configura la conexión con Cloudflare para consultar RUC y DNI. Puedes guardar clientes manualmente.")
+       .setNegativeButton("Después",null)
+       .setPositiveButton("Configurar"){_,_->rucSettings()}.show()
+     }
+    }
+   }
+  }
   button("Guardar cliente"){
    val nombre=name.text.toString().trim()
    val documento=doc.text.toString().trim()
@@ -1048,7 +1141,7 @@ class MainActivity:Activity() {
    toast(if(updated>0)"Cliente actualizado" else "Cliente guardado")
    clients()
   }
-  button("Configurar consulta de RUC"){rucSettings()}
+  button("Configurar consulta RUC / DNI"){rucSettings()}
   heading("Clientes registrados")
   val c=db.readableDatabase.rawQuery("SELECT name,document,address FROM clients ORDER BY id DESC",null)
   while(c.moveToNext()){
