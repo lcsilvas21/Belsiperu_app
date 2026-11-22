@@ -1972,8 +1972,33 @@ class MainActivity:Activity() {
   val taxable=line.product.taxType=="GRAVADO"&&line.applyIgv
   return Pair(base,base*(if(taxable)1.18 else 1.0))
  }
- private fun newQuote(preselectedClientId:Long?=null){
-  screen("Nueva cotización")
+ private fun newQuote(preselectedClientId:Long?=null,editQuoteId:Long?=null){
+  var editClientId:Long?=null
+  var editCurrency="PEN"
+  if(editQuoteId!=null){
+   val existing=db.readableDatabase.rawQuery(
+    "SELECT client_id,client,currency,status FROM quotes WHERE id=?",
+    arrayOf(editQuoteId.toString()))
+   try{
+    if(!existing.moveToFirst()){
+     toast("No se encontró la proforma.");quotes();return
+    }
+    if(existing.getString(3)!="PENDIENTE"){
+     toast("Solo se pueden editar proformas pendientes.");quotes();return
+    }
+    editClientId=if(existing.isNull(0))null else existing.getLong(0)
+    if(editClientId==null){
+     val matches=db.readableDatabase.rawQuery(
+      "SELECT id FROM clients WHERE name=? ORDER BY id DESC LIMIT 1",
+      arrayOf(existing.getString(1)?:""))
+     try{if(matches.moveToFirst())editClientId=matches.getLong(0)}
+      finally{matches.close()}
+    }
+    editCurrency=existing.getString(2)?:"PEN"
+   }finally{existing.close()}
+  }
+  screen(if(editQuoteId==null)"Nueva cotización" else
+   "Editar proforma 0002-"+editQuoteId.toString().padStart(7,'0'))
   button("← Inicio"){home()}
   heading("Información del cliente","Busca un cliente ya registrado por nombre, RUC o DNI.")
   label("Buscar cliente")
@@ -2037,7 +2062,7 @@ class MainActivity:Activity() {
    }
    override fun afterTextChanged(s:Editable?){}
   })
-  preselectedClientId?.let{id->
+  (preselectedClientId?:editClientId)?.let{id->
    customers.firstOrNull{it.first==id}?.let{saved->
     changingClient=true
     clientSearch.setText(saved.second)
@@ -2054,6 +2079,7 @@ class MainActivity:Activity() {
   heading("Productos de la cotización","Busca por nombre, código, marca o código de barras y agrégalos a la proforma.")
   label("Moneda de la cotización")
   val currency=choice(listOf("PEN","USD"))
+  currency.setSelection(if(editCurrency=="USD")1 else 0)
   label("Tipo de cambio (S/ por US$)")
   val fx=input("Ejemplo: 3.75",true)
   fx.setText("3.75")
@@ -2076,9 +2102,34 @@ class MainActivity:Activity() {
    ))
   }}finally{productCursor.close()}
   val picked=mutableListOf<QuoteLineDraft>()
+  if(editQuoteId!=null){
+   val saved=db.readableDatabase.rawQuery(
+    "SELECT product_id,code,name,unit,qty,unit_price,discount_pct,"+
+    "discount_amount,igv,photo_uri,include_product_photo,tax_affectation "+
+    "FROM quote_items WHERE quote_id=? ORDER BY id",
+    arrayOf(editQuoteId.toString()))
+   try{while(saved.moveToNext()){
+    val pid=if(saved.isNull(0))null else saved.getLong(0)
+    val code=saved.getString(1)?:""
+    val name=saved.getString(2)?:"Producto"
+    val unit=saved.getString(3)?:"UNIDADES"
+    val photoUri=saved.getString(9)
+    val item=pid?.let{p->catalog.firstOrNull{it.id==p}}
+     ?:CatalogQuoteProduct(-1L,code,name,saved.getDouble(5),
+      editCurrency,false,saved.getString(11)?:"INAFECTO",
+      photoUri,"PRODUCTO",unit,"","","",0)
+    val price=saved.getDouble(5)
+    val effective=item.copy(currency=editCurrency,price=price,
+     code=code,name=name,unit=unit,photoUri=photoUri?:item.photoUri)
+    picked.add(QuoteLineDraft(effective,saved.getInt(4),price,
+     saved.getDouble(6),saved.getDouble(7),saved.getInt(8)==1,
+     saved.getInt(10)==1))
+   }}finally{saved.close()}
+  }
   val selectedList=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
   val totalView=line("Total: S/ 0.00",20f,green,true)
   val resultsList=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+  var editPickedLine:(Int)->Unit={}
   fun targetCurrency()=currency.selectedItem?.toString()?:"PEN"
   fun currentRate()=fx.text.toString().toDoubleOrNull()?:0.0
   fun money(value:Double)=String.format(Locale.US,"%,.2f",value)
