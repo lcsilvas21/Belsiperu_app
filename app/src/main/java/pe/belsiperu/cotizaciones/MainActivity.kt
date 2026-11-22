@@ -1979,6 +1979,24 @@ class MainActivity:Activity() {
    }.show()
  }
 
+ private fun inventory(){
+  screen("Kardex / Stock");button("← Inicio"){home()}
+  val c=db.readableDatabase.rawQuery("SELECT name,stock,min_stock FROM products WHERE kind='PRODUCTO' ORDER BY name",null)
+  while(c.moveToNext()){val s=c.getInt(1);val m=c.getInt(2);label("${c.getString(0)}: $s unidades ${if(s<=m)"⚠ REPOSICIÓN SUGERIDA: ${m-s}" else ""}")}
+  c.close()
+  label("Últimos movimientos")
+  val moves=db.readableDatabase.rawQuery("SELECT product,qty,reason,created FROM movements ORDER BY id DESC LIMIT 30",null)
+  while(moves.moveToNext())label("${moves.getString(3)} • ${moves.getString(0)} • ${moves.getInt(1)} • ${moves.getString(2)}")
+  moves.close()
+ }
+ private fun selectPhoto(id:Long){
+  pendingPhotoProduct=id
+  val intent=Intent(Intent.ACTION_OPEN_DOCUMENT).apply{
+   addCategory(Intent.CATEGORY_OPENABLE);type="image/*"
+  }
+  startActivityForResult(intent,92)
+ }
+
  private fun pdfOptions(id:Long){
   screen("Opciones PDF");button("← Cotizaciones"){quotes()}
   info("Modelo de proforma BELSIPERU","Se conserva el diseño aprobado. Si el producto tiene una fotografía accesible, aparecerá en el PDF.")
