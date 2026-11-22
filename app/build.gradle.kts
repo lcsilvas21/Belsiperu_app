@@ -11,14 +11,14 @@ android {
         applicationId = "pe.belsiperu.cotizaciones"
         minSdk = 26
         targetSdk = 35
-        versionCode = 15
-        versionName = "1.7"
+        versionCode = 16
+        versionName = "1.8"
     }
 
     // APK de prueba independiente para no sobreescribir la instalación y datos actuales.
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".autodoc"
+            applicationIdSuffix = ".clientes"
             versionNameSuffix = "-prueba"
         }
     }
