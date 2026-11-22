@@ -1010,8 +1010,9 @@ class MainActivity:Activity() {
   val currencies=mutableListOf<String>()
   val includedTax=mutableListOf<Boolean>()
   val taxTypes=mutableListOf<String>()
+  val photos=mutableListOf<String?>()
   val c=db.readableDatabase.rawQuery(
-   "SELECT id,name,price,currency,sale_includes_igv,tax_affectation FROM products ORDER BY name",null)
+   "SELECT id,name,price,currency,sale_includes_igv,tax_affectation,photo_uri FROM products ORDER BY name",null)
   try{while(c.moveToNext()){
    ids.add(c.getLong(0))
    names.add(c.getString(1))
@@ -1019,6 +1020,7 @@ class MainActivity:Activity() {
    currencies.add(c.getString(3)?:"PEN")
    includedTax.add(c.getInt(4)==1)
    taxTypes.add(c.getString(5)?:"GRAVADO")
+   photos.add(c.getString(6))
   }}finally{c.close()}
   if(names.isEmpty()){
    label("Primero registra un producto o servicio.")
@@ -1026,6 +1028,32 @@ class MainActivity:Activity() {
    return
   }
   label("Producto o servicio");val product=choice(names)
+  label("Fotografía en la proforma")
+  val photoMode=choice(listOf("Con fotografía del producto","Sin fotografía del producto"))
+  val photoPreview=ImageView(this).apply{
+   background=round(Color.WHITE,12,border)
+   contentDescription="Vista previa de la fotografía que se incluirá en la proforma"
+   setPadding(d(7),d(7),d(7),d(7))
+  }
+  body.addView(photoPreview,LinearLayout.LayoutParams(-1,d(120)).apply{setMargins(0,d(4),0,d(5))})
+  val photoNote=line("",12f,muted)
+  body.addView(photoNote)
+  fun updatePhotoChoice(){
+   val i=product.selectedItemPosition
+   val include=photoMode.selectedItemPosition==0
+   val uri=photos.getOrNull(i)
+   if(!include){
+    photoPreview.visibility=View.GONE
+    photoNote.text="La proforma se generará SIN fotografía, aunque el producto tenga una foto en el catálogo."
+   }else if(uri.isNullOrBlank()){
+    photoPreview.visibility=View.GONE
+    photoNote.text="Este producto aún no tiene fotografía. Añádela desde Productos o elige 'Sin fotografía'."
+   }else{
+    photoPreview.visibility=View.VISIBLE
+    showProductImage(photoPreview,uri)
+    photoNote.text="La fotografía del catálogo se incluirá en la proforma PDF."
+   }
+  }
   label("Variante de precio")
   val priceOptions=mutableListOf("Precio de venta")
   val variantPrices=mutableListOf<Double>()
@@ -1075,10 +1103,15 @@ class MainActivity:Activity() {
       "Producto gravado: la aplicación calculará IGV 18 %."
    }
    updateQuotePrice()
+   updatePhotoChoice()
   }
   variantChoice.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
    override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
    override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){updateQuotePrice()}
+  }
+  photoMode.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
+   override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
+   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){updatePhotoChoice()}
   }
   product.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
    override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
@@ -1087,6 +1120,11 @@ class MainActivity:Activity() {
   button("Guardar cotización"){
    val i=product.selectedItemPosition
    if(i !in ids.indices){toast("Selecciona un producto");return@button}
+   val includePhoto=photoMode.selectedItemPosition==0
+   if(includePhoto && photos.getOrNull(i).isNullOrBlank()){
+    toast("Este producto no tiene foto. Añádela en Productos o selecciona 'Sin fotografía'.")
+    return@button
+   }
    val q=qty.text.toString().toIntOrNull()?:0
    val rate=fx.text.toString().toDoubleOrNull()?:0.0
    if(q<=0 || rate<=0){toast("Revisa cantidad y tipo de cambio");return@button}
@@ -1100,10 +1138,7 @@ class MainActivity:Activity() {
    val taxable=taxTypes[i]=="GRAVADO" && igv.isChecked
    val total=subtotal*(if(taxable)1.18 else 1.0)
    if(!total.isFinite()){toast("El total de cotización no es válido");return@button}
-   val photoCur=db.readableDatabase.rawQuery(
-    "SELECT photo_uri FROM products WHERE id=?",arrayOf(ids[i].toString()))
-   val photo=try{if(photoCur.moveToFirst())photoCur.getString(0) else null}
-    finally{photoCur.close()}
+   val photo=if(includePhoto)photos[i] else null
    val effectiveTax=if(taxable)"GRAVADO" else if(taxTypes[i]=="GRAVADO")"INAFECTO" else taxTypes[i]
    val values=android.content.ContentValues().apply{
     put("client",client.selectedItem.toString());put("product",names[i])
@@ -1112,7 +1147,8 @@ class MainActivity:Activity() {
     put("tax_affectation",effectiveTax)
     put("currency",target);put("total",total)
     put("status","PENDIENTE");put("created",today())
-    put("product_photo",photo);put("discount_amount",fixed)
+    put("product_photo",photo);put("include_product_photo",if(includePhoto)1 else 0)
+    put("discount_amount",fixed)
    }
    val id=db.writableDatabase.insert("quotes",null,values)
    if(id<1){toast("No se pudo guardar la cotización");return@button}
