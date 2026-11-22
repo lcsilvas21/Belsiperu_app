@@ -3562,65 +3562,112 @@ class MainActivity:Activity() {
     }
    }catch(_:Exception){}catch(_:OutOfMemoryError){}
   }
+  // Cada modelo tiene columnas y encabezados propios, como las referencias del cliente.
   val colRatio=if(modern)
-   floatArrayOf(0.065f,0.12f,0.07f,0.365f,0.13f,0.105f,0.145f)
-  else floatArrayOf(0.09f,0.12f,0.31f,0.13f,0.105f,0.12f,0.125f)
-  val xs=FloatArray(8)
+   floatArrayOf(0.055f,0.115f,0.065f,0.08f,0.31f,0.13f,0.13f,0.115f)
+  else floatArrayOf(0.075f,0.075f,0.37f,0.10f,0.08f,0.08f,0.11f,0.11f)
+  val xs=FloatArray(9)
   xs[0]=margin
   for(i in colRatio.indices)xs[i+1]=xs[i]+colRatio[i]*cw
-  val tableFont=if(compact)6.7f else 8.2f
+  val tableFont=if(compact)6.3f else 7.6f
   val labels=if(modern)
-   listOf("ÍTEM","CÓDIGO","CANT.","DESCRIPCIÓN / MARCA","P. UNIT.","DESC.","TOTAL")
-  else listOf("CANT.","UND.","DESCRIPCIÓN","P. BRUTO","% DSCTO","P. NETO","TOTAL")
+   listOf("ÍTEM","CÓDIGO","CANT.","UND.","DESCRIPCIÓN / MARCA",
+    "P. UNIT.","P. TOTAL","ENTR.")
+  else listOf("CANT.","UND.","DESCRIPCIÓN","P. BRUTO",
+   "% DTO 01","% DTO 02","P. NETO","TOTAL")
   fun tableHeader(){
-   rect(margin,y,w-margin,y+25f,if(modern)gold else navy)
+   val paperColor=if(modern)Color.rgb(250,172,31) else Color.rgb(248,194,40)
+   paint.style=Paint.Style.FILL;paint.color=paperColor
+   canvas.drawRoundRect(RectF(margin,y,w-margin,y+24f),7f,7f,paint)
+   paint.style=Paint.Style.STROKE;paint.strokeWidth=0.7f
+   paint.color=Color.rgb(55,52,46)
+   canvas.drawRoundRect(RectF(margin,y,w-margin,y+24f),7f,7f,paint)
+   paint.style=Paint.Style.FILL
    for(i in labels.indices){
     clipped(labels[i],xs[i]+3f,y+16f,xs[i+1]-xs[i]-5f,
-     if(compact)6.3f else 7.1f,true,if(modern)navy else Color.WHITE)
+     if(compact)5.75f else 6.6f,true,inkColor)
    }
    y+=26f
   }
   fun firstPageHeader(){
    if(modern){
-    rect(0f,0f,w,91f,navy)
-    rect(0f,88f,w,95f,teal)
-    rect(margin,15f,margin+105f,76f,Color.WHITE)
-    drawCompanyLogo(canvas,RectF(margin+5f,17f,margin+100f,74f))
-    val x=margin+115f
-    clipped(config.legal,x,36f,w-margin-x,if(compact)12f else 16f,true,Color.WHITE)
-    clipped("RUC "+config.ruc,x,52f,w-margin-x,9.2f,false,Color.WHITE)
-    clipped(config.fiscal,x,67f,w-margin-x,7.3f,false,Color.WHITE)
-    clipped(documentCode+quoteNumber,margin,125f,cw,if(compact)13.5f else 17f,true,navy)
-    text("EMISIÓN: "+formattedDate,margin,143f,8f,false,subdued)
-    if(pdfExpiry.isNotBlank())
-     textRight("VENCE: "+pdfExpiry,w-margin,143f,8f,false,subdued)
+    // IFITSA: gran banner comercial, ángulo naranja, tira de rubros.
+    rect(0f,0f,w,108f,navy)
+    val angle=Path().apply{
+     moveTo(0f,0f);lineTo(w*0.295f,0f);lineTo(w*0.235f,108f)
+     lineTo(0f,108f);close()
+    }
+    paint.style=Paint.Style.FILL;paint.color=Color.rgb(250,168,29)
+    canvas.drawPath(angle,paint)
+    rect(0f,0f,w*0.28f,13f,Color.WHITE)
+    rect(margin,26f,margin+103f,77f,Color.WHITE)
+    drawCompanyLogo(canvas,RectF(margin+4f,28f,margin+99f,75f))
+    val x=margin+130f
+    clipped(config.legal,x,43f,w-margin-x,if(compact)12f else 16f,true,Color.WHITE)
+    clipped(config.business.ifBlank{"Herramientas y maquinaria industrial"},
+     x,61f,w-margin-x,if(compact)7f else 8.5f,false,Color.WHITE)
+    clipped("RUC "+config.ruc,x,80f,w-margin-x,8f,false,Color.WHITE)
+    rect(0f,108f,w,125f,Color.rgb(244,246,248))
+    textCenter("BELSIPERU  •  MAQUINARIAS  •  HERRAMIENTAS  •  INDUSTRIA",
+     w/2f,120f,if(compact)6.3f else 8.1f,true,teal)
+    textCenter("COTIZACIÓN N° "+quoteNumber,w/2f,151f,
+     if(compact)12.5f else 17.3f,true,inkColor)
+    text("Lima, "+formattedDate,margin,173f,8.3f,false,subdued)
+    text("Señores",margin+8f,191f,8f,true)
+    clipped(customerName.ifBlank{"Cliente"},margin+84f,191f,cw*0.52f,8.3f)
+    text(documentName,margin+8f,205f,8f,true)
+    clipped(document,margin+84f,205f,cw*0.48f,8.1f)
+    text("Atención",margin+8f,219f,8f,true)
+    clipped(customerName,margin+84f,219f,cw*0.50f,8.1f)
+    text("Dirección",margin+8f,233f,8f,true)
+    clipped(address,margin+84f,233f,cw*0.60f,7.9f)
+    if(phone.isNotBlank()){
+     text("Tel.",w-margin-cw*0.26f,192f,7.5f,true)
+     textRight(phone,w-margin,192f,7.5f)
+    }
+    if(email.isNotBlank())
+     clipped(email,w-margin-cw*0.30f,207f,cw*0.30f,7.1f)
+    text("De nuestra consideración:",margin,261f,8f)
+    text("Nos es grato dirigirnos a ustedes para hacerles llegar nuestra oferta comercial.",
+     margin,275f,if(compact)6.4f else 8.0f)
+    y=290f
    }else{
-    rect(0f,0f,w,82f,navy)
-    rect(0f,80f,w,85f,gold)
-    rect(margin,14f,margin+108f,72f,Color.WHITE)
-    drawCompanyLogo(canvas,RectF(margin+6f,16f,margin+103f,70f))
-    val x=margin+118f
-    clipped(config.legal,x,35f,w-margin-x,if(compact)11f else 15f,true,Color.WHITE)
-    clipped("RUC "+config.ruc,x,51f,w-margin-x,9f,false,Color.WHITE)
-    clipped(config.fiscal,x,65f,w-margin-x,7.2f,false,Color.WHITE)
-    textCenter("PROFORMA DE VENTA",w/2f,119f,if(compact)15f else 19f,true,navy)
-    textCenter(quoteNumber,w/2f,135f,10f,false,subdued)
-    text("EMISIÓN: "+formattedDate,margin,155f,8f,false,subdued)
-    if(pdfExpiry.isNotBlank())
-     textRight("VENCE: "+pdfExpiry,w-margin,155f,8f,false,subdued)
+    // FULLTRADE: franja azul angular, título centrado y ficha sin recuadro.
+    rect(0f,0f,w,83f,navy)
+    val angle=Path().apply{
+     moveTo(w-61f,83f);lineTo(w,9f);lineTo(w,83f);close()
+    }
+    paint.style=Paint.Style.FILL;paint.color=Color.WHITE
+    canvas.drawPath(angle,paint)
+    rect(margin,13f,margin+115f,68f,Color.WHITE)
+    drawCompanyLogo(canvas,RectF(margin+5f,15f,margin+110f,66f))
+    val x=margin+125f
+    clipped(config.legal,x,32f,w-margin-x-42f,
+     if(compact)11.8f else 17f,true,Color.WHITE)
+    clipped(config.header,x,48f,w-margin-x-42f,
+     if(compact)5.3f else 7.2f,true,Color.WHITE)
+    clipped("RUC "+config.ruc,x,64f,w-margin-x-42f,8f,false,Color.WHITE)
+    textRight("Lima, "+formattedDate,w-margin,107f,8.5f,false,subdued)
+    textCenter("PROFORMA DE VENTA",w/2f,148f,
+     if(compact)15f else 20.5f,false,inkColor)
+    textCenter(quoteNumber,w/2f,169f,10.8f)
+    text("Señor(es)",margin+8f,192f,8f,true)
+    clipped(customerName,margin+93f,192f,cw-112f,8.2f)
+    text("Atención",margin+8f,208f,8f,true)
+    clipped(customerName,margin+93f,208f,cw-112f,8.2f)
+    text("Dirección",margin+8f,224f,8f,true)
+    clipped(address,margin+93f,224f,cw-112f,8.2f)
+    text(documentName,margin+8f,240f,8f,true)
+    clipped(document,margin+93f,240f,cw-112f,8.2f)
+    if(phone.isNotBlank()){
+     text("Teléfono",margin+8f,256f,8f,true)
+     text(phone,margin+93f,256f,8.2f)
+    }
+    if(email.isNotBlank())clipped(email,w-margin-cw*0.38f,256f,cw*0.38f,7.5f)
+    text("Por la presente, nos es grato cotizarle lo siguiente:",
+     margin,283f,8f)
+    y=295f
    }
-   val top=if(modern)156f else 166f
-   rect(margin,top,w-margin,top+73f,light)
-   text("DATOS DEL CLIENTE",margin+9f,top+16f,9.1f,true,primary)
-   clipped(customerName.ifBlank{"Cliente"},margin+9f,top+33f,cw*0.61f,10f,true,inkColor)
-   clipped(documentName+": "+document.ifBlank{"—"},margin+9f,top+48f,cw*0.55f,8f)
-   clipped(address.ifBlank{"Dirección no registrada"},margin+9f,top+62f,cw-18f,7.8f,false,subdued)
-   if(phone.isNotBlank())clipped("TEL.: "+phone,margin+cw*0.64f,top+33f,cw*0.32f,7f)
-   if(email.isNotBlank())clipped(email,margin+cw*0.64f,top+48f,cw*0.32f,7f)
-   val after=top+88f
-   if(config.header.isNotBlank())
-    clipped(config.header,margin,after,cw,7.5f,false,subdued)
-   y=after+11f
   }
   fun nextPageHeader(){
    rect(0f,0f,w,62f,navy)
@@ -3640,15 +3687,41 @@ class MainActivity:Activity() {
    tableHeader()
   }
   fun finishPage(){
-   rect(margin,h-45f,w-margin,h-44f,if(modern)teal else gold)
-   clipped(config.commercial.ifBlank{config.legal},margin,h-29f,cw*0.61f,7.5f,true,subdued)
-   textRight("Página "+pageNumber,w-margin,h-29f,7.5f,false,subdued)
+   if(modern){
+    rect(margin,h-43f,w-margin,h-41.5f,inkColor)
+    textCenter(config.legal+"  |  RUC "+config.ruc,
+     w/2f,h-30f,8f,true,inkColor)
+    clipped(config.commercial.ifBlank{config.legal},margin,h-18f,cw*0.36f,
+     6.9f,true,subdued)
+   }else{
+    // Pie comercial propio de FULLTRADE con líneas discontinuas y firmas.
+    val dashColor=Color.rgb(85,88,93)
+    for(k in 0..((cw/7f).toInt())){
+     val xx=margin+k*7f
+     rect(xx,h-127f,xx+3f,h-126.3f,dashColor)
+     rect(xx,h-80f,xx+3f,h-79.3f,dashColor)
+    }
+    text("Asesor de ventas:",margin+7f,h-113f,7.7f,true,inkColor)
+    clipped(pdfSeller,margin+112f,h-113f,cw*0.33f,7.7f)
+    text("Correo:",w/2f+14f,h-113f,7.7f,true,inkColor)
+    clipped(email.ifBlank{config.commercial},w/2f+62f,h-113f,cw*0.30f,7.2f)
+    text("WhatsApp:",margin+7f,h-94f,7.7f,true)
+    clipped(phone,margin+112f,h-94f,cw*0.36f,7.7f)
+    textCenter("BELSIPERU  •  MAQUINARIAS  •  HERRAMIENTAS  •  INDUSTRIA",
+     w/2f,h-59f,if(compact)6.8f else 10f,true,navy)
+    textCenter(config.header,w/2f,h-43f,
+     if(compact)5f else 7.2f,false,subdued)
+    textCenter(config.legal+"  |  RUC "+config.ruc,
+     w/2f,h-26f,7.9f,true,inkColor)
+   }
    textCenter("Proforma comercial · No es comprobante de pago electrónico",
-    w/2f,h-15f,6.8f,false,subdued)
+    w/2f,h-12f,6.5f,false,subdued)
+   textRight("Página "+pageNumber,w-margin,h-12f,6f,false,subdued)
    pdf.finishPage(page)
   }
   fun ensureSpace(required:Float){
-   if(y+required>h-62f){
+   val protectedFooter=if(modern)60f else 140f
+   if(y+required>h-protectedFooter){
     finishPage()
     beginPage(true)
    }
@@ -3657,7 +3730,7 @@ class MainActivity:Activity() {
   try{
    beginPage(false)
    for((index,item) in items.withIndex()){
-    val nameCol=if(modern)3 else 2
+    val nameCol=if(modern)4 else 2
     val descX=xs[nameCol]+4f
     val descWidth=xs[nameCol+1]-xs[nameCol]-9f
     val detailLines=pdfTextLines(item.name,descWidth,tableFont,10)
@@ -3672,24 +3745,23 @@ class MainActivity:Activity() {
     if(index%2==1)rect(margin,top,w-margin,top+rowHeight,light)
     val base=top+13f
     if(modern){
-     text((index+1).toString(),xs[0]+4f,base,tableFont)
-     clipped(item.code,xs[1]+3f,base,xs[2]-xs[1]-6f,tableFont)
+     text((index+1).toString(),xs[0]+3f,base,tableFont)
+     clipped(item.code,xs[1]+2f,base,xs[2]-xs[1]-4f,tableFont-0.2f)
      text(item.qty.toString(),xs[2]+3f,base,tableFont)
-     textRight(money(item.price),xs[5]-3f,base,tableFont-0.2f)
-     val discountLabel=if(item.discountAmount>0.0)
-      pdfNumber(item.discountPct,0)+"% + "+pdfNumber(item.discountAmount)
-     else pdfNumber(item.discountPct,0)+"%"
-     clipped(discountLabel,xs[5]+3f,base,xs[6]-xs[5]-6f,tableFont-0.5f)
-     textRight(money(item.total),xs[7]-3f,base,tableFont,true)
+     clipped(item.unit,xs[3]+2f,base,xs[4]-xs[3]-4f,tableFont-0.8f)
+     textRight(money(item.price),xs[6]-3f,base,tableFont-0.5f)
+     textRight(money(item.total),xs[7]-3f,base,tableFont-0.4f,true)
+     clipped("48 H",xs[7]+3f,base,xs[8]-xs[7]-6f,tableFont-0.5f)
     }else{
-     text(item.qty.toString(),xs[0]+4f,base,tableFont)
-     clipped(item.unit,xs[1]+3f,base,xs[2]-xs[1]-6f,tableFont-0.5f)
-     textRight(money(item.price),xs[4]-3f,base,tableFont-0.5f)
-     textRight(pdfNumber(item.discountPct,0)+"%",xs[5]-3f,base,tableFont-0.4f)
+     text(item.qty.toString(),xs[0]+3f,base,tableFont)
+     clipped(item.unit,xs[1]+3f,base,xs[2]-xs[1]-5f,tableFont-0.3f)
+     textRight(money(item.price),xs[4]-3f,base,tableFont-0.8f)
+     textRight(pdfNumber(item.discountPct,0)+"%",xs[5]-3f,base,tableFont-0.7f)
+     textRight("0%",xs[6]-3f,base,tableFont-0.7f)
      val netUnit=(item.price*(1-item.discountPct/100.0)-
       item.discountAmount/item.qty.coerceAtLeast(1)).coerceAtLeast(0.0)
-     textRight(money(netUnit),xs[6]-3f,base,tableFont-0.5f)
-     textRight(money(item.total),xs[7]-3f,base,tableFont,true)
+     textRight(money(netUnit),xs[7]-3f,base,tableFont-0.8f)
+     textRight(money(item.total),xs[8]-3f,base,tableFont-0.7f,true)
     }
     var descY=base
     for(line in detailLines){
@@ -3716,82 +3788,113 @@ class MainActivity:Activity() {
    val igvAmount=items.sumOf{if(it.taxable)it.total-it.total/1.18 else 0.0}
    val nonTaxableAmount=items.sumOf{if(!it.taxable)it.total else 0.0}
    val subtotal=taxableAmount+nonTaxableAmount
-   ensureSpace(104f)
-   y+=11f
    if(modern){
-    val boxLeft=w-margin-cw*0.49f
-    rect(boxLeft,y-5f,w-margin,y+23f,Color.rgb(236,244,241))
-    text("RESUMEN DE COTIZACIÓN",boxLeft+9f,y+12f,9f,true,teal)
-    y+=35f
-    text("SUBTOTAL",boxLeft+8f,y,8.5f,false,inkColor)
-    textRight(money(subtotal),w-margin-7f,y,9f,true)
-    y+=18f
-    text("IGV 18 %",boxLeft+8f,y,8.5f)
-    textRight(money(igvAmount),w-margin-7f,y,9f,true)
-    y+=21f
-    rect(boxLeft,y-14f,w-margin,y+14f,teal)
-    text("TOTAL",boxLeft+8f,y+5f,10f,true,Color.WHITE)
-    textRight(money(quoteTotal),w-margin-7f,y+5f,11f,true,Color.WHITE)
-    y+=26f
+    // Como en IFITSA: gran espacio libre, condiciones abajo a la izquierda
+    // e importes apilados en el sector inferior derecho.
+    if(!compact&&pageNumber==1&&y<h-263f)y=h-263f
+    ensureSpace(157f)
+    val baseY=y
+    val boxX=w-margin-191f
+    text("Glosa:",margin+4f,baseY+8f,8f,true,inkColor)
+    text("CONDICIONES COMERCIALES",margin+4f,baseY+29f,
+     if(compact)8.3f else 10f,true,inkColor)
+    val conditions=listOf(
+     "Moneda: "+if(quoteCurrency=="USD")"Dólares (US$)" else "Soles (S/)",
+     "Impuestos: IGV "+if(igvAmount>0.005)"18 %" else "No aplicado",
+     "Forma de pago: "+pdfPayment,
+     "Validez: "+pdfExpiry.ifBlank{"No especificada"},
+     "Entrega: A COORDINAR / 48 HORAS"
+    )
+    for((i,value) in conditions.withIndex())
+     clipped(value,margin+7f,baseY+46f+i*15f,boxX-margin-14f,7.9f)
+    val totals=listOf(
+     Pair("SUBTOTAL",money(subtotal)),
+     Pair("IGV 18 %",money(igvAmount)),
+     Pair("TOTAL",money(quoteTotal))
+    )
+    for((i,pair) in totals.withIndex()){
+     val top=baseY+15f+i*28f
+     paint.style=Paint.Style.FILL
+     paint.color=if(i==2)Color.rgb(250,168,29) else Color.rgb(245,247,250)
+     canvas.drawRoundRect(RectF(boxX,top,boxX+75f,top+24f),3f,3f,paint)
+     paint.color=Color.rgb(245,247,250)
+     canvas.drawRoundRect(RectF(boxX+79f,top,w-margin,top+24f),3f,3f,paint)
+     text(pair.first,boxX+5f,top+16f,8f,i==2)
+     textRight(pair.second,w-margin-6f,top+16f,8.4f,true)
+    }
+    // Firma en marco visible; no se mezcla con el resumen comercial.
+    val signTop=baseY+106f
+    paint.style=Paint.Style.STROKE;paint.color=inkColor;paint.strokeWidth=0.8f
+    canvas.drawRect(RectF(boxX,signTop,w-margin,signTop+58f),paint)
+    paint.style=Paint.Style.FILL
+    text("Atentamente,",boxX+8f,signTop+15f,8.2f,true)
+    textRight(config.legal,w-margin-8f,signTop+33f,7.7f,true)
+    textRight(pdfSeller,w-margin-8f,signTop+48f,7.5f)
+    if(config.footer.isNotBlank()){
+     for((j,v) in pdfTextLines(config.footer,boxX-margin-14f,7.3f,3)
+       .withIndex())
+      text(v,margin+6f,baseY+137f+j*10f,7.3f,true)
+    }
+    y=baseY+174f
+    if(config.banks.isNotBlank()){
+     ensureSpace(30f)
+     text("CUENTAS BANCARIAS",margin,y,8.5f,true,teal);y+=15f
+     for(value in pdfTextLines(config.banks,cw-10f,7.8f,150)){
+      ensureSpace(13f);text(value,margin+5f,y,7.8f);y+=12f
+     }
+    }
    }else{
-    rect(margin,y-5f,w-margin,y+19f,teal)
-    text("TIPO DE MONEDA",margin+8f,y+11f,8f,true,Color.WHITE)
-    textRight("TOTAL NETO       IGV 18 %        TOTAL DOCUMENTO",
-     w-margin-7f,y+11f,if(compact)7f else 8f,true,Color.WHITE)
-    y+=35f
-    text(if(quoteCurrency=="USD")"Dólares (US$)" else "Soles (S/)",
-     margin+8f,y,9f)
-    textRight(money(subtotal)+"       "+money(igvAmount)+"       "+
-     money(quoteTotal),w-margin-7f,y,9.2f,true,inkColor)
-    y+=28f
-   }
-   ensureSpace(63f)
-   y+=4f
-   horizontal(y,if(modern)teal else navy)
-   y+=18f
-   text("CONDICIONES COMERCIALES",margin,y,10f,true,primary)
-   y+=16f
-   val conditions=listOf(
-    "Moneda: "+(if(quoteCurrency=="USD")"Dólares americanos" else "Soles"),
-    "Forma de pago: "+pdfPayment,
-    "Validez: "+pdfExpiry.ifBlank{"No especificada"},
-    "Responsable: "+pdfSeller
-   )
-   for(condition in conditions){
-    ensureSpace(15f)
-    clipped(condition,margin+6f,y,cw-12f,8.7f)
-    y+=14f
-   }
-   if(notes.isNotBlank()){
-    ensureSpace(25f)
-    text("OBSERVACIONES DEL CLIENTE",margin,y+5f,8.6f,true,primary)
-    y+=18f
-    for(value in pdfTextLines(notes,cw-10f,8f,80)){
-     ensureSpace(13f)
-     text(value,margin+6f,y,8f)
-     y+=12f
-    }
-   }
-   if(config.banks.isNotBlank()){
-    ensureSpace(33f)
+    // Como en FULLTRADE: resumen verde horizontal y separadores punteados.
+    ensureSpace(123f)
     y+=8f
-    text("CUENTAS BANCARIAS",margin,y,10f,true,primary)
-    y+=17f
-    for(bankLine in pdfTextLines(config.banks,cw-12f,8.1f,250)){
-     ensureSpace(14f)
-     text(bankLine,margin+6f,y,8.1f)
-     y+=13f
+    val greenBand=Color.rgb(83,232,51)
+    paint.style=Paint.Style.FILL;paint.color=greenBand
+    canvas.drawRoundRect(RectF(margin,y,w-margin,y+25f),8f,8f,paint)
+    paint.style=Paint.Style.STROKE;paint.color=inkColor;paint.strokeWidth=.7f
+    canvas.drawRoundRect(RectF(margin,y,w-margin,y+25f),8f,8f,paint)
+    paint.style=Paint.Style.FILL
+    val totalHeaders=listOf("TIPO DE MONEDA","TOTAL NETO","TOTAL IGV 18 %","TOTAL DOC.")
+    val tx=listOf(margin+8f,margin+cw*.48f,margin+cw*.70f,w-margin-6f)
+    for((i,v) in totalHeaders.withIndex()){
+     if(i==3)textRight(v,tx[i],y+16f,if(compact)6.1f else 7.6f,true)
+     else text(v,tx[i],y+16f,if(compact)6.1f else 7.6f,true)
     }
-   }
-   if(config.footer.isNotBlank()){
-    ensureSpace(31f)
-    y+=10f
-    horizontal(y)
-    y+=17f
-    for(value in pdfTextLines(config.footer,cw-10f,8f,50)){
-     ensureSpace(14f)
-     textCenter(value,w/2f,y,8f,false,subdued)
-     y+=13f
+    y+=39f
+    text(if(quoteCurrency=="USD")"Dólares" else "Soles",margin+8f,y,8.5f)
+    textRight(money(subtotal),margin+cw*.58f,y,8.2f)
+    textRight(money(igvAmount),margin+cw*.80f,y,8.2f)
+    textRight(money(quoteTotal),w-margin-6f,y,8.7f,true)
+    y+=13f
+    for(k in 0..((cw/7f).toInt())){
+     val xx=margin+k*7f
+     rect(xx,y,xx+3f,y+0.6f,subdued)
+    }
+    y+=22f
+    text("Condición de pago:",margin+8f,y,8.5f)
+    text(pdfPayment,margin+127f,y,8.3f,true)
+    textRight("Entrega: 48 horas (salvo venta previa)",w-margin,y,7.7f)
+    y+=19f
+    text("Validez:",margin+8f,y,8.3f)
+    text(pdfExpiry.ifBlank{"No especificada"},margin+127f,y,8.3f)
+    y+=20f
+    if(notes.isNotBlank()){
+     text("Observaciones:",margin+8f,y,8f,true);y+=14f
+     for(value in pdfTextLines(notes,cw-14f,7.5f,80)){
+      ensureSpace(12f);text(value,margin+8f,y,7.5f);y+=12f
+     }
+    }
+    if(config.footer.isNotBlank()){
+     y+=6f
+     for(value in pdfTextLines(config.footer,cw-15f,7.5f,50)){
+      ensureSpace(12f);text(value,margin+8f,y,7.5f);y+=12f
+     }
+    }
+    if(config.banks.isNotBlank()){
+     ensureSpace(30f);y+=5f
+     text("CUENTAS BANCARIAS",margin+8f,y,8.5f,true,navy);y+=15f
+     for(value in pdfTextLines(config.banks,cw-16f,7.4f,150)){
+      ensureSpace(13f);text(value,margin+8f,y,7.4f);y+=12f
+     }
     }
    }
    finishPage()
