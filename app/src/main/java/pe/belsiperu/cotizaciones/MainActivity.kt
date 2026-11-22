@@ -2741,9 +2741,12 @@ class MainActivity:Activity() {
   }
   var y=drawHeader()
   fun endPage(next:Boolean){
-   val footerLines=pdfTextLines(company.footer,contentWidth,if(ticket)6.5f else 7.8f,2)
+   val footerSize=if(ticket)6.5f else 7.8f
+   val footerLines=pdfTextLines(company.footer,contentWidth,footerSize,2)
    footerLines.forEachIndexed{i,value->
-    text(value,margin,height-42f+i*10f,if(ticket)6.5f else 7.8f,false,labelColor)
+    font(footerSize,false,labelColor)
+    canvas.drawText(value,margin+(contentWidth-paint.measureText(value))/2f,
+     height-42f+i*10f,paint)
    }
    text("Proforma comercial. No constituye comprobante tributario.",margin,height-16f,
     if(ticket)6f else 7f,false,labelColor)
@@ -3025,7 +3028,7 @@ class MainActivity:Activity() {
       ticketBanks.take(6).forEachIndexed{i,value->fit(value,9f,633f+i*11f,207f,7.7f)}
       stroke(9f,706f,218f,706f)
       pdfTextLines(company.footer,205f,7.5f,3)
-       .forEachIndexed{i,value->fit(value,9f,721f+i*11f,207f,7.5f)}
+       .forEachIndexed{i,value->center(value,9f,218f,721f+i*11f,7.5f)}
       center(company.commercial.ifBlank{company.legal},9f,218f,776f,10f,true)
      center("Proforma comercial. No es comprobante tributario.",9f,218f,793f,6.5f)
      canvas.restore()
@@ -3105,7 +3108,7 @@ class MainActivity:Activity() {
       val landscapeBanks=pdfTextLines(company.banks,660f,7.8f,75)
       landscapeBanks.take(5).forEachIndexed{i,value->fit(value,151f,500f+i*9f,659f,7.8f)}
       pdfTextLines(company.footer,790f,8.2f,2)
-       .forEachIndexed{i,value->fit(value,left,551f+i*11f,795f,8.2f)}
+       .forEachIndexed{i,value->center(value,left,rightEdge,551f+i*11f,8.2f)}
       center(company.commercial.ifBlank{company.legal},left,rightEdge,578f,11f,true)
      center("Proforma comercial emitida por BELSIPERU. No es comprobante de pago electrónico.",left,rightEdge,591f,7.2f)
     }
@@ -3382,8 +3385,9 @@ class MainActivity:Activity() {
    singleBankLines.take(9).forEachIndexed{i,value->
     fit(value,156.1f,602f+i*9.8f,365f,8f)
    }
+   // Centrar cada línea del pie sin alterar el texto configurable.
    pdfTextLines(company.footer,520f,8.4f,2).forEachIndexed{i,value->
-    fit(value,15.05f,710f+i*11f,520f,8.4f)
+    center(value,15.05f,544.62f,710f+i*11f,8.4f)
    }
    center(company.commercial.ifBlank{company.legal},15.05f,544.62f,753f,11.3f,true)
    center("Proforma comercial emitida mediante BELSIPERU. No constituye comprobante de pago electrónico.",15.05f,544.62f,766f,7.5f)
@@ -3476,12 +3480,13 @@ class MainActivity:Activity() {
     p.textSize=8.2f;canvas.drawText(value,margin,h-147f+i*13f,p)
    }
    pdfTextLines(company.footer,w-margin*2,8f,2).forEachIndexed{i,value->
-    p.textSize=8f;canvas.drawText(value,margin,h-88f+i*12f,p)
+    p.textSize=8f;p.isFakeBoldText=false
+    canvas.drawText(value,(w-p.measureText(value))/2f,h-88f+i*12f,p)
    }
   }else{
    pdfTextLines(company.footer,w-margin*2,if(compact)6.8f else 8f,2).forEachIndexed{i,value->
-    p.color=main;p.textSize=if(compact)6.8f else 8f
-    canvas.drawText(value,margin,h-58f+i*10f,p)
+    p.color=main;p.textSize=if(compact)6.8f else 8f;p.isFakeBoldText=false
+    canvas.drawText(value,(w-p.measureText(value))/2f,h-58f+i*10f,p)
    }
   }
 p.color=main;p.textSize=if(compact)8f else 10f
