@@ -1915,7 +1915,12 @@ class MainActivity:Activity() {
      .any{field->field.contains(query,ignoreCase=true)}
    }
    if(filtered.isEmpty()){
-    resultsList.addView(line("No se encontraron productos. Regístralos en el catálogo.",13f,muted))
+    val msg=if(catalog.isEmpty())
+     "No hay productos guardados en esta instalación de BELSIPERU. Entra a Productos para registrar aquí tus artículos."
+    else
+     "No hay coincidencias para «"+query+"» entre los "+catalog.size+
+      " productos de esta instalación. Prueba con otro nombre, código o marca."
+    resultsList.addView(line(msg,13f,muted))
    }
    for(product in filtered.take(24)){
     val row=card()
@@ -1957,7 +1962,20 @@ class MainActivity:Activity() {
    override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){refreshPicked()}
    override fun afterTextChanged(s:Editable?){}
   })
-  if(catalog.isEmpty())button("Ir al catálogo de productos"){products()}
+  // Antes se rellenaba resultsList, pero nunca se agregaba al layout.
+  // Sin esta vista, ningún producto del catálogo podía seleccionarse.
+  body.addView(line(
+   if(catalog.isEmpty())
+    "Catálogo vacío en esta instalación. Los productos registrados en otras APK de prueba no se transfieren automáticamente."
+   else
+    "Catálogo disponible: "+catalog.size+" artículo(s). Toca «＋ Agregar producto» en los resultados.",
+   13f,if(catalog.isEmpty())Color.rgb(162,84,30) else muted))
+  if(catalog.isEmpty()){
+   button("＋ Registrar productos en esta instalación"){products()}
+  }
+  body.addView(resultsList,LinearLayout.LayoutParams(-1,-2).apply{
+   setMargins(0,d(6),0,d(10))
+  })
   renderProducts()
   heading("Productos agregados")
   body.addView(selectedList)
@@ -1967,7 +1985,14 @@ class MainActivity:Activity() {
   button("✓ Guardar cotización"){
    val clientId=selectedClientId
    if(clientId==null){toast("Selecciona un cliente registrado o crea uno nuevo.");return@button}
-   if(picked.isEmpty()){toast("Agrega al menos un producto del catálogo.");return@button}
+   if(picked.isEmpty()){
+    AlertDialog.Builder(this).setTitle("Faltan productos")
+     .setMessage(if(catalog.isEmpty())
+      "Esta instalación no contiene productos registrados. Abre Productos para crearlos aquí. Los catálogos de otras APK de prueba se guardan por separado."
+      else "Primero busca el producto en la lista visible, toca «＋ Agregar producto» e indica la cantidad. Después podrás guardar la cotización.")
+     .setPositiveButton("Entendido",null).show()
+    return@button
+   }
    val rate=currentRate();val target=targetCurrency()
    if(rate<=0.0||!rate.isFinite()){toast("Indica un tipo de cambio válido.");return@button}
    val customer=db.readableDatabase.rawQuery(
