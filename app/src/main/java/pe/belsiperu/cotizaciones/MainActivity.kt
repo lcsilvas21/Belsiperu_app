@@ -111,6 +111,89 @@ class MainActivity:Activity() {
  private var pdfExpiry=""
  private var pdfSeller="BELSIPERU"
  private var pdfPayment="CONTADO"
+ private var companyLogoPreview:ImageView?=null
+ private fun companyPrefs()=getSharedPreferences("belsiperu_company_pdf",MODE_PRIVATE)
+ private data class CompanyPdfInfo(
+  val ruc:String,val legal:String,val commercial:String,val fiscal:String,
+  val business:String,val regime:String,val header:String,val banks:String,
+  val footer:String,val decimals:Int
+ )
+ private fun companyInfo():CompanyPdfInfo{
+  val prefs=companyPrefs()
+  fun get(key:String,otherwise:String="")=prefs.getString(key,otherwise)?:otherwise
+  return CompanyPdfInfo(
+   get("ruc","20605060634"),
+   get("legal","BELSIPERU S.A.C."),
+   get("commercial","BELSIPERU"),
+   get("fiscal",""),
+   get("business","Maquinaria y equipos industriales"),
+   get("regime","Régimen MYPE Tributario"),
+   get("header","LO MEJOR EN MÁQUINAS Y HERRAMIENTAS INDUSTRIALES PARA EL PERÚ"),
+   get("banks",""),
+   get("footer","Los productos en stock se entregan dentro de 48 horas, salvo venta previa."),
+   prefs.getInt("decimals",2).coerceIn(2,4)
+  )
+ }
+ private fun pdfNumber(value:Double,decimals:Int=companyInfo().decimals)=
+  String.format(Locale.US,"%,."+decimals+"f",value)
+ private fun companyLogoFile()=java.io.File(filesDir,"company_pdf_logo.png")
+ private fun loadCompanyLogoBitmap():Bitmap?{
+  val file=companyLogoFile()
+  try{
+   if(file.isFile){
+    val bmp=BitmapFactory.decodeFile(file.absolutePath)
+    if(bmp!=null)return bmp
+   }
+  }catch(_:Exception){}catch(_:OutOfMemoryError){}
+  return try{assets.open("belsiperu_logo.png").use{BitmapFactory.decodeStream(it)}}
+   catch(_:Exception){null}catch(_:OutOfMemoryError){null}
+ }
+ private fun drawCompanyLogo(canvas:Canvas,rect:RectF){
+  val bmp=loadCompanyLogoBitmap()?:return
+  try{drawProductImage(canvas,bmp,rect)}finally{bmp.recycle()}
+ }
+ private fun pdfTextLines(content:String,maxWidth:Float,size:Float,limit:Int=16):List<String>{
+  val p=Paint(Paint.ANTI_ALIAS_FLAG).apply{textSize=size;typeface=Typeface.DEFAULT}
+  val result=mutableListOf<String>()
+  for(part in content.replace("\r","").split("\n")){
+   if(part.isBlank()){if(result.size<limit)result.add("");continue}
+   var current=""
+   for(word in part.trim().split(Regex("\\s+"))){
+    if(word.isEmpty())continue
+    val attempt=if(current.isEmpty())word else current+" "+word
+    if(current.isNotEmpty()&&p.measureText(attempt)>maxWidth){
+     result.add(current);current=""
+    }
+    if(p.measureText(word)>maxWidth){
+     var remaining=word
+     while(remaining.isNotEmpty()){
+      var i=1
+      while(i<remaining.length&&p.measureText(remaining.take(i+1))<=maxWidth)i++
+      result.add(remaining.take(i))
+      remaining=remaining.drop(i)
+      if(result.size>=limit)return result
+     }
+    }else current=if(current.isEmpty())word else current+" "+word
+    if(result.size>=limit)return result
+   }
+   if(current.isNotEmpty())result.add(current)
+   if(result.size>=limit)return result
+  }
+  return result.take(limit)
+ }
+ private fun settingTextArea(title:String,value:String,lines:Int=4):EditText{
+  label(title)
+  val e=EditText(this).apply{
+   textSize=15f;setTextColor(ink);setHintTextColor(muted)
+   setPadding(d(12),d(12),d(12),d(12))
+   setSingleLine(false);minLines=lines;maxLines=12;gravity=Gravity.TOP
+   inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+   background=round(Color.WHITE,12,border)
+   setText(value)
+  }
+  body.addView(e,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(4),0,d(8))})
+  return e
+ }
  private fun today()=SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.getDefault()).format(Date())
 
  // Carga la foto del catálogo más reciente; para cotizaciones antiguas usa
@@ -422,11 +505,112 @@ class MainActivity:Activity() {
  }
  private fun settings(){
   screen("Configuración")
-  heading("BELSIPERU V2","Diseño marino, verde y dorado")
-  info("Protección del PIN","El PIN actual es de prototipo: no guardes información sensible ni real hasta reforzar la seguridad.",Color.rgb(169,105,19))
+  heading("Datos de la empresa e impresión",
+   "Personaliza el encabezado, el logotipo y la información comercial de las proformas PDF.")
+  button("🏢 Empresa · Datos para el encabezado"){companySettings()}
+  button("🖨 Impresión · Bancos, cabecera y pie de página"){printingSettings()}
+  heading("Otros ajustes")
   button("Configurar consulta RUC / DNI"){rucSettings()}
+  info("Protección de datos","Mantén protegidas tus claves y haz copias de seguridad del catálogo. Esta APK de prueba guarda su configuración en el dispositivo.",Color.rgb(169,105,19))
   button("Bloquear aplicación"){lock()}
   button("Volver al inicio"){home()}
+ }
+ private fun companySettings(){
+  screen("Configuración · Empresa")
+  button("← Volver a Configuración"){settings()}
+  heading("Información de la empresa",
+   "Estos datos se mostrarán en el encabezado de tus próximas proformas PDF.")
+  val previous=companyInfo()
+  label("Logotipo de la empresa")
+  val preview=ImageView(this).apply{
+   scaleType=ImageView.ScaleType.FIT_CENTER
+   background=round(Color.WHITE,14,border)
+   setPadding(d(10),d(10),d(10),d(10))
+  }
+  companyLogoPreview=preview
+  loadCompanyLogoBitmap()?.let{preview.setImageBitmap(it)}
+  body.addView(preview,LinearLayout.LayoutParams(-1,d(145)).apply{
+   setMargins(0,d(6),0,d(4))
+  })
+  info("Medidas recomendadas para el logotipo",
+   "Formato PNG con fondo transparente, idealmente 1200 × 600 píxeles (relación 2:1), hasta 3 MB. Se adapta sin deformarse al encabezado del PDF.")
+  button("Seleccionar logotipo desde el teléfono"){
+   val intent=Intent(Intent.ACTION_OPEN_DOCUMENT).apply{
+    addCategory(Intent.CATEGORY_OPENABLE)
+    type="image/*"
+   }
+   startActivityForResult(intent,94)
+  }
+  button("Usar logotipo predeterminado"){
+   companyLogoFile().delete()
+   companyLogoPreview?.let{view->
+    loadCompanyLogoBitmap()?.let{view.setImageBitmap(it)}
+   }
+   toast("Se utilizará el logotipo original.")
+  }
+  label("RUC de la empresa *")
+  val ruc=input("11 dígitos")
+  ruc.inputType=InputType.TYPE_CLASS_NUMBER
+  ruc.filters=arrayOf(android.text.InputFilter.LengthFilter(11))
+  ruc.setText(previous.ruc)
+  label("Razón social *")
+  val legal=input("Nombre legal de la empresa")
+  legal.setText(previous.legal)
+  label("Nombre comercial")
+  val commercial=input("Marca o nombre comercial")
+  commercial.setText(previous.commercial)
+  val fiscal=settingTextArea("Dirección fiscal *",previous.fiscal,3)
+  label("Rubro del negocio")
+  val business=input("Actividad comercial")
+  business.setText(previous.business)
+  label("Régimen tributario")
+  val regime=input("Régimen de la empresa")
+  regime.setText(previous.regime)
+  button("✓ Guardar información de empresa"){
+   val tax=ruc.text.toString().trim()
+   val name=legal.text.toString().trim()
+   val addr=fiscal.text.toString().trim()
+   if(!tax.matches(Regex("[0-9]{11}"))){
+    ruc.error="El RUC requiere 11 dígitos.";ruc.requestFocus();return@button
+   }
+   if(name.isBlank()){legal.error="Ingresa la razón social";legal.requestFocus();return@button}
+   if(addr.isBlank()){fiscal.error="Ingresa la dirección fiscal";fiscal.requestFocus();return@button}
+   val ok=companyPrefs().edit()
+    .putString("ruc",tax).putString("legal",name)
+    .putString("commercial",commercial.text.toString().trim())
+    .putString("fiscal",addr)
+    .putString("business",business.text.toString().trim())
+    .putString("regime",regime.text.toString().trim())
+    .commit()
+   if(ok){toast("Datos de empresa guardados para los PDF");settings()}
+   else toast("No se pudo guardar la configuración.")
+  }
+ }
+ private fun printingSettings(){
+  screen("Configuración · Impresión")
+  button("← Volver a Configuración"){settings()}
+  heading("Configuración básica",
+   "Personaliza el texto de las proformas; puedes modificarlo sin consultar SUNAT.")
+  val old=companyInfo()
+  label("Número máximo de decimales")
+  val decimals=choice(listOf("2 decimales","3 decimales","4 decimales"))
+  decimals.setSelection(old.decimals-2)
+  val header=settingTextArea("Información de cabecera",old.header,3)
+  info("Consejo","La cabecera puede incluir un lema o descripción breve de la actividad comercial.")
+  val banks=settingTextArea("Cuentas bancarias (todas las cuentas corrientes y CCI)",old.banks,7)
+  info("Cómo ingresar las cuentas",
+   "Escribe una cuenta por línea: Banco | Moneda | Cuenta corriente | CCI. Puedes añadir tantas líneas como necesites. No ingreses contraseñas, tarjetas ni claves bancarias.")
+  val footer=settingTextArea("Información del pie de página",old.footer,4)
+  button("✓ Guardar configuración de impresión"){
+   val ok=companyPrefs().edit()
+    .putInt("decimals",decimals.selectedItemPosition+2)
+    .putString("header",header.text.toString().trim())
+    .putString("banks",banks.text.toString().trim())
+    .putString("footer",footer.text.toString().trim())
+    .commit()
+   if(ok){toast("Impresión configurada. Se aplicará a los nuevos PDF.");settings()}
+   else toast("No se pudieron guardar los ajustes de impresión.")
+  }
  }
  private fun rucSettings(){
   screen("Consulta de RUC")
@@ -2324,6 +2508,35 @@ class MainActivity:Activity() {
  @Deprecated("Legacy activity result used for minimal SDK example")
  override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){
   super.onActivityResult(requestCode,resultCode,data)
+  if(requestCode==94 && resultCode==RESULT_OK && data?.data!=null){
+   try{
+    val uri=data.data!!
+    val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+    contentResolver.openInputStream(uri)?.use{BitmapFactory.decodeStream(it,null,bounds)}
+    if(bounds.outWidth<=0||bounds.outHeight<=0||
+       bounds.outWidth>18000||bounds.outHeight>18000)
+     throw IllegalArgumentException("La imagen no es válida o tiene dimensiones excesivas.")
+    var sample=1
+    while(bounds.outWidth/sample>1400||bounds.outHeight/sample>1400)sample*=2
+    val bmp=contentResolver.openInputStream(uri)?.use{
+     BitmapFactory.decodeStream(it,null,BitmapFactory.Options().apply{inSampleSize=sample})
+    }?:throw IllegalArgumentException("No fue posible leer la imagen.")
+    val tmp=java.io.File(filesDir,"company_pdf_logo.tmp")
+    try{
+     val written=tmp.outputStream().use{bmp.compress(Bitmap.CompressFormat.PNG,100,it)}
+     if(!written)throw IllegalStateException("No se pudo guardar el logotipo.")
+     if(tmp.length()>3L*1024*1024)throw IllegalArgumentException(
+      "El logotipo procesado supera 3 MB. Elige uno más ligero.")
+     val target=companyLogoFile()
+     if(!tmp.renameTo(target)){
+      tmp.copyTo(target,overwrite=true);tmp.delete()
+     }
+     companyLogoPreview?.setImageBitmap(bmp)
+     toast("Logotipo guardado para la cabecera del PDF.")
+    }finally{tmp.delete()}
+   }catch(e:Exception){toast("No se pudo cargar el logo: "+(e.message?:"Archivo no válido"))}
+    catch(_:OutOfMemoryError){toast("La imagen es demasiado grande; usa un PNG más pequeño.")}
+  }
   if(requestCode==93 && resultCode==RESULT_OK && data?.data!=null){
    val uri=data.data!!
    try{
