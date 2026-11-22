@@ -2252,6 +2252,21 @@ class MainActivity:Activity() {
   }finally{pdf.close()}
  }
 
+ private fun quoteClientDocumentAddress(quoteId:Long,clientName:String):Pair<String,String>{
+  val idCur=db.readableDatabase.rawQuery(
+   "SELECT client_id FROM quotes WHERE id=?",arrayOf(quoteId.toString()))
+  val clientId=try{
+   if(idCur.moveToFirst()&&!idCur.isNull(0))idCur.getLong(0) else null
+  }finally{idCur.close()}
+  val cc=if(clientId!=null)db.readableDatabase.rawQuery(
+   "SELECT document,address FROM clients WHERE id=? LIMIT 1",arrayOf(clientId.toString()))
+  else db.readableDatabase.rawQuery(
+   "SELECT document,address FROM clients WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(clientName))
+  return try{
+   if(cc.moveToFirst())Pair(cc.getString(0)?:"",cc.getString(1)?:"")
+   else Pair("","")
+  }finally{cc.close()}
+ }
  private fun writePdfProformaAdaptada(id:Long,out:java.io.OutputStream){
   val cur=db.readableDatabase.rawQuery(
     "SELECT client,product,qty,unit_price,discount,igv,currency,total,created,discount_amount,tax_affectation FROM quotes WHERE id=?",
@@ -2277,9 +2292,8 @@ class MainActivity:Activity() {
    val prod=db.readableDatabase.rawQuery("SELECT code FROM products WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(item))
    if(prod.moveToFirst())code=prod.getString(0)?:""
    prod.close()
-   val cli=db.readableDatabase.rawQuery("SELECT document,address FROM clients WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(client))
-   if(cli.moveToFirst()){document=cli.getString(0)?:"";address=cli.getString(1)?:""}
-   cli.close()
+   val customerInfo=quoteClientDocumentAddress(id,client)
+   document=customerInfo.first;address=customerInfo.second
    val timestamp=try{SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).parse(rawDate)}catch(_:Exception){null}
    val date=if(timestamp!=null)SimpleDateFormat("dd/MM/yyyy",Locale("es","PE")).format(timestamp) else rawDate.take(10)
    val time=if(timestamp!=null)SimpleDateFormat("hh:mm a",Locale.US).format(timestamp) else ""
@@ -2567,10 +2581,8 @@ class MainActivity:Activity() {
     "SELECT code FROM products WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(product))
    if(prod.moveToFirst())code=prod.getString(0)?:""
    prod.close()
-   val cc=db.readableDatabase.rawQuery(
-    "SELECT document,address FROM clients WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(client))
-   if(cc.moveToFirst()){document=cc.getString(0)?:"";address=cc.getString(1)?:""}
-   cc.close()
+   val clientInfo=quoteClientDocumentAddress(id,client)
+   document=clientInfo.first;address=clientInfo.second
    val curDate=try{
     val input=SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US)
     val d=input.parse(created)
