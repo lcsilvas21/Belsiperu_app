@@ -955,6 +955,7 @@ class MainActivity:Activity() {
    val net=if(applyTax)total/1.18 else total
    val tax=(total-net).coerceAtLeast(0.0)
    val discount=(qty*unitPrice*pct/100.0+fixed).coerceAtLeast(0.0)
+   val productPicture=loadQuoteProductBitmap(id)
    var code="";var document="";var address=""
    val prod=db.readableDatabase.rawQuery(
     "SELECT code FROM products WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(product))
@@ -1152,10 +1153,17 @@ class MainActivity:Activity() {
    tableCell(0,"1",rowBaseline,1,7.8f)
    tableCell(1,"UNIDADES",rowBaseline,1,7.8f)
    tableCell(2,code,rowBaseline,1,7.8f)
-   val descriptionLines=wrap(product,xs[4]-xs[3]-8f,7.8f,29)
+   val descriptionLines=wrap(product,xs[4]-xs[3]-8f,7.8f,if(productPicture!=null)14 else 29)
    descriptionLines.forEachIndexed{k,wordLine->
     val baseline=rowBaseline+k*8.6f
     if(baseline<tableBottom-3f)tableCell(3,wordLine,baseline,0,7.8f)
+   }
+   if(productPicture!=null){
+    val pictureTop=maxOf(259f,rowBaseline+descriptionLines.size*8.6f+13f)
+    val pictureBottom=minOf(tableBottom-7f,pictureTop+130f)
+    if(pictureBottom-pictureTop>32f){
+     drawProductImage(canvas,productPicture,RectF(xs[3]+8f,pictureTop,xs[3]+163f,pictureBottom))
+    }
    }
    tableCell(4,amount(qty),rowBaseline,2,7.8f)
    tableCell(5,amount(unitPrice),rowBaseline,2,7.8f)
@@ -1195,6 +1203,7 @@ class MainActivity:Activity() {
    center("BELSIPERU",15.05f,544.62f,753f,11.3f,true)
    center("Proforma comercial emitida mediante BELSIPERU. No constituye comprobante de pago electrónico.",15.05f,544.62f,766f,7.5f)
    canvas.restore()
+   productPicture?.recycle()
    pdf.finishPage(page)
    try{pdf.writeTo(out)}finally{pdf.close()}
   }finally{c.close()}
