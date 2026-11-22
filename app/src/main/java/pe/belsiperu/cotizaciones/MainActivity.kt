@@ -2345,7 +2345,7 @@ class MainActivity:Activity() {
   body.addView(totalView,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(10),0,d(10))})
   refreshPicked()
 
-  button("✓ Guardar cotización"){
+  button(if(editQuoteId==null)"✓ Guardar cotización" else "✓ Guardar cambios de la proforma"){
    val clientId=selectedClientId
    if(clientId==null){toast("Selecciona un cliente registrado o crea uno nuevo.");return@button}
    if(picked.isEmpty()){
@@ -2393,7 +2393,9 @@ class MainActivity:Activity() {
     put("discount",first.discountPct);put("discount_amount",first.discountAmount*firstFactor)
     put("igv",if(firstTaxable)1 else 0);put("tax_affectation",firstTax)
     put("currency",target);put("total",total)
-    put("status","PENDIENTE");put("created",today())
+    if(editQuoteId==null){
+     put("status","PENDIENTE");put("created",today())
+    }
     put("product_photo",if(first.includePhoto)first.product.photoUri else null)
     put("include_product_photo",if(first.includePhoto)1 else 0)
    }
@@ -2401,7 +2403,21 @@ class MainActivity:Activity() {
    var createdId=-1L;var error:String?=null
    try{
     database.beginTransaction()
-    createdId=database.insertOrThrow("quotes",null,values)
+    if(editQuoteId==null){
+     createdId=database.insertOrThrow("quotes",null,values)
+    }else{
+     val status=database.rawQuery(
+      "SELECT status FROM quotes WHERE id=?",arrayOf(editQuoteId.toString()))
+     try{
+      if(!status.moveToFirst()||status.getString(0)!="PENDIENTE")
+       throw IllegalStateException("La proforma ya no está pendiente.")
+     }finally{status.close()}
+     createdId=editQuoteId
+     if(database.update("quotes",values,"id=? AND status='PENDIENTE'",
+       arrayOf(createdId.toString()))!=1)
+      throw IllegalStateException("No se pudieron actualizar los datos.")
+     database.delete("quote_items","quote_id=?",arrayOf(createdId.toString()))
+    }
     picked.forEachIndexed{index,item->
      val factor=if(item.product.currency==target)1.0 else
       if(item.product.currency=="USD")rate else 1.0/rate
@@ -2409,7 +2425,8 @@ class MainActivity:Activity() {
      val taxType=if(applyTax)"GRAVADO" else
       if(item.product.taxType=="GRAVADO")"INAFECTO" else item.product.taxType
      database.insertOrThrow("quote_items",null,android.content.ContentValues().apply{
-      put("quote_id",createdId);put("product_id",item.product.id)
+      put("quote_id",createdId)
+      if(item.product.id>0)put("product_id",item.product.id) else putNull("product_id")
       put("code",item.product.code);put("name",item.product.name);put("unit",item.product.unit)
       put("qty",item.quantity);put("unit_price",item.netUnitPrice*factor)
       put("discount_pct",item.discountPct);put("discount_amount",item.discountAmount*factor)
@@ -2423,8 +2440,8 @@ class MainActivity:Activity() {
    }catch(e:Exception){error=e.message?:"Error al guardar cotización"}
    finally{if(database.inTransaction())database.endTransaction()}
    if(error!=null){toast("No se pudo guardar la cotización: "+error);return@button}
-   toast("Cotización COT-"+createdId.toString().padStart(6,'0')+" guardada")
-   quotes()
+   toast(if(editQuoteId==null)"Cotización guardada" else "Proforma actualizada")
+   if(editQuoteId==null)quotes() else pdfOptions(createdId)
   }
   label("Las cotizaciones se guardan al pulsar el botón. Las consultas y selecciones no modifican el inventario.")
  }
