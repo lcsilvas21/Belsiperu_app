@@ -319,7 +319,7 @@ class MainActivity:Activity() {
   heading("Resumen del negocio")
   val q=queryCount("SELECT COUNT(*) FROM quotes")
   val p=queryCount("SELECT COUNT(*) FROM products")
-  val low=queryCount("SELECT COUNT(*) FROM products WHERE stock<=min_stock")
+  val low=queryCount("SELECT COUNT(*) FROM products WHERE kind='PRODUCTO' AND stock<=min_stock")
   tileRow(tile(q.toString()+" cotizaciones","Historial guardado",android.R.drawable.ic_menu_edit){quotes()},tile(p.toString()+" productos","En catálogo",android.R.drawable.ic_menu_agenda){products()})
   if(low>0)info("Atención: "+low+" producto(s) con stock bajo","Revisa Inventario para reponer existencias.",Color.rgb(169,105,19))
   button("⚙  Configuración"){settings()}
@@ -329,7 +329,7 @@ class MainActivity:Activity() {
   screen("Compras")
   heading("Ingreso de mercadería","Registro básico de stock y Kardex")
   val ids=mutableListOf<Long>();val names=mutableListOf<String>()
-  val cur=db.readableDatabase.rawQuery("SELECT id,name FROM products ORDER BY name",null)
+  val cur=db.readableDatabase.rawQuery("SELECT id,name FROM products WHERE kind='PRODUCTO' ORDER BY name",null)
   while(cur.moveToNext()){ids.add(cur.getLong(0));names.add(cur.getString(1))}
   cur.close()
   if(names.isEmpty()){info("Sin productos","Registra primero un producto en el catálogo.");button("Ir a productos"){products()};return}
@@ -355,8 +355,8 @@ class MainActivity:Activity() {
   heading("Resumen comercial","Indicadores básicos guardados en este teléfono")
   val q=queryCount("SELECT COUNT(*) FROM quotes")
   val sold=queryCount("SELECT COUNT(*) FROM quotes WHERE status='VENDIDA'")
-  val units=queryCount("SELECT COALESCE(SUM(stock),0) FROM products")
-  val low=queryCount("SELECT COUNT(*) FROM products WHERE stock<=min_stock")
+  val units=queryCount("SELECT COALESCE(SUM(stock),0) FROM products WHERE kind='PRODUCTO'")
+  val low=queryCount("SELECT COUNT(*) FROM products WHERE kind='PRODUCTO' AND stock<=min_stock")
   info("Cotizaciones",q.toString()+" registros")
   info("Ventas confirmadas",sold.toString()+" operaciones")
   info("Unidades en stock",units.toString()+" unidades")
@@ -1113,25 +1113,62 @@ class MainActivity:Activity() {
    if(status=="PENDIENTE")button("Confirmar venta COT-${id}"){confirm(id)}
   };c.close()
  }
+
  private fun confirm(id:Long){
-  AlertDialog.Builder(this).setTitle("Confirmar venta").setMessage("Se descontará el stock una sola vez. ¿Continuar?")
+  AlertDialog.Builder(this).setTitle("Confirmar venta")
+   .setMessage("Se registrará la venta. Para productos físicos se revisará el stock y se descontará una sola vez.")
    .setNegativeButton("Cancelar",null).setPositiveButton("Confirmar"){_,_->
-    val w=db.writableDatabase;w.beginTransaction()
+    val database=db.writableDatabase
+    var error:String?=null
+    database.beginTransaction()
     try{
-     val c=w.rawQuery("SELECT product,qty,status FROM quotes WHERE id=?",arrayOf(id.toString()))
-     if(c.moveToFirst() && c.getString(2)=="PENDIENTE"){
-      val product=c.getString(0);val qty=c.getInt(1)
-      w.execSQL("UPDATE products SET stock=stock-? WHERE name=?",arrayOf(qty,product))
-      w.execSQL("INSERT INTO movements(product,qty,reason,created) VALUES(?,?,?,?)",arrayOf(product,-qty,"VENTA COT-$id",today()))
-      w.execSQL("UPDATE quotes SET status='VENDIDA' WHERE id=?",arrayOf(id))
-     };c.close();w.setTransactionSuccessful()
-    }finally{w.endTransaction()}
-    quotes()
+     val quote=database.rawQuery(
+      "SELECT product,qty,status,product_id FROM quotes WHERE id=?",
+      arrayOf(id.toString()))
+     var name="";var quantity=0;var pending=false;var productId:Long?=null
+     try{if(quote.moveToFirst()){
+      name=quote.getString(0)?:""
+      quantity=quote.getInt(1)
+      pending=quote.getString(2)=="PENDIENTE"
+      if(!quote.isNull(3))productId=quote.getLong(3)
+     }}finally{quote.close()}
+     if(!pending){error="Esta cotización ya fue confirmada o no existe."}
+     else{
+      val product=if(productId!=null){
+       database.rawQuery("SELECT id,kind,stock,sell_without_stock FROM products WHERE id=?",
+        arrayOf(productId.toString()))
+      }else{
+       database.rawQuery("SELECT id,kind,stock,sell_without_stock FROM products WHERE name=? ORDER BY id DESC LIMIT 1",
+        arrayOf(name))
+      }
+      var itemId:Long?=null;var kind="PRODUCTO";var available=0;var allowOversell=false
+      try{if(product.moveToFirst()){
+       itemId=product.getLong(0);kind=product.getString(1)?:"PRODUCTO"
+       available=product.getInt(2);allowOversell=product.getInt(3)==1
+      }}finally{product.close()}
+      if(itemId==null){error="El producto ya no existe en el catálogo."}
+      else if(kind=="SERVICIO"){
+       // Los servicios no deben descontar stock ni generar movimientos físicos.
+       database.execSQL("UPDATE quotes SET status='VENDIDA' WHERE id=?",arrayOf(id))
+      }else if(quantity>available && !allowOversell){
+       error="Stock insuficiente: hay "+available+" unidades. Activa 'Ventas sin stock' en el producto si corresponde."
+      }else{
+       database.execSQL("UPDATE products SET stock=stock-? WHERE id=?",arrayOf(quantity,itemId))
+       database.execSQL("INSERT INTO movements(product,qty,reason,created) VALUES(?,?,?,?)",
+        arrayOf(name,-quantity,"VENTA COT-"+id,today()))
+       database.execSQL("UPDATE quotes SET status='VENDIDA' WHERE id=?",arrayOf(id))
+      }
+     }
+     if(error==null)database.setTransactionSuccessful()
+    }catch(e:Exception){
+     error="No se pudo confirmar la venta: "+(e.message?:"Error de base de datos")
+    }finally{database.endTransaction()}
+    if(error!=null)toast(error!!) else{toast("Venta confirmada");quotes()}
    }.show()
  }
  private fun inventory(){
   screen("Kardex / Stock");button("← Inicio"){home()}
-  val c=db.readableDatabase.rawQuery("SELECT name,stock,min_stock FROM products ORDER BY name",null)
+  val c=db.readableDatabase.rawQuery("SELECT name,stock,min_stock FROM products WHERE kind='PRODUCTO' ORDER BY name",null)
   while(c.moveToNext()){val s=c.getInt(1);val m=c.getInt(2);label("${c.getString(0)}: $s unidades ${if(s<=m)"⚠ REPOSICIÓN SUGERIDA: ${m-s}" else ""}")}
   c.close()
   label("Últimos movimientos")
