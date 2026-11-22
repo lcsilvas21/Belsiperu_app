@@ -11,14 +11,14 @@ android {
         applicationId = "pe.belsiperu.cotizaciones"
         minSdk = 26
         targetSdk = 35
-        versionCode = 27
-        versionName = "1.19"
+        versionCode = 28
+        versionName = "1.20"
     }
 
     // Instalación de prueba independiente: las bases SQLite de otras versiones no se comparten.
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".pdfv119"
+            applicationIdSuffix = ".pdfv120"
             versionNameSuffix = "-prueba"
         }
     }
@@ -35,4 +35,5 @@ android {
 dependencies {
     // Escaneo mediante cámara; Google Play Services gestiona el permiso.
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    implementation("androidx.core:core:1.13.1")
 }
