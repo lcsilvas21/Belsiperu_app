@@ -1971,10 +1971,24 @@ class MainActivity:Activity() {
    val rate=currentRate();val target=targetCurrency()
    if(rate<=0.0||!rate.isFinite()){toast("Indica un tipo de cambio válido.");return@button}
    val customer=db.readableDatabase.rawQuery(
-    "SELECT name FROM clients WHERE id=?",arrayOf(clientId.toString()))
-   val customerName=try{if(customer.moveToFirst())customer.getString(0) else null}
-    finally{customer.close()}
+    "SELECT name,document,address FROM clients WHERE id=?",arrayOf(clientId.toString()))
+   var customerName:String?=null
+   var customerDoc=""
+   var customerAddress=""
+   try{if(customer.moveToFirst()){
+    customerName=customer.getString(0)
+    customerDoc=customer.getString(1)?:""
+    customerAddress=customer.getString(2)?:""
+   }}finally{customer.close()}
    if(customerName.isNullOrBlank()){toast("El cliente ya no está registrado.");return@button}
+   if(!customerDoc.matches(Regex("[0-9]{8}|[0-9]{11}")) || customerAddress.isBlank()){
+    AlertDialog.Builder(this).setTitle("Completa los datos para el PDF")
+     .setMessage("Este cliente necesita DNI o RUC válido y dirección principal. Puedes corregirlo manualmente antes de generar la cotización.")
+     .setNegativeButton("Después",null)
+     .setPositiveButton("Editar cliente"){_,_->clientEditor(clientId,returnToQuote=true)}
+     .show()
+    return@button
+   }
    val calculated=picked.map{quoteLineNumbers(it,target,rate)}
    val total=calculated.sumOf{it.second}
    if(!total.isFinite()||total<0){toast("Revisa las cantidades y los descuentos.");return@button}
