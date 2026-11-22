@@ -17,6 +17,7 @@ on:
       - feat/botones-calendario-v1-13
       - feat/configuracion-empresa-impresion-v1-14
       - fix/pie-pdf-centrado-v1-15
+      - feat/disenos-pdf-moderno-corporativo-v1-16
   pull_request:
     branches:
       - main
