@@ -24,11 +24,13 @@ import org.json.JSONObject
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
-class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,5) {
+class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,6) {
  override fun onCreate(db:SQLiteDatabase) {
   db.execSQL("CREATE TABLE products(id INTEGER PRIMARY KEY AUTOINCREMENT,code TEXT,name TEXT,price REAL,currency TEXT,stock INTEGER,min_stock INTEGER,photo_uri TEXT,kind TEXT NOT NULL DEFAULT 'PRODUCTO',barcode TEXT NOT NULL DEFAULT '',category TEXT NOT NULL DEFAULT '',brand TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT 'UNIDADES',purchase_price REAL NOT NULL DEFAULT 0,sale_includes_igv INTEGER NOT NULL DEFAULT 0,purchase_includes_igv INTEGER NOT NULL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'GRAVADO',isc_type TEXT NOT NULL DEFAULT 'NO APLICA',sunat_code TEXT NOT NULL DEFAULT '',icbper INTEGER NOT NULL DEFAULT 0,sell_without_stock INTEGER NOT NULL DEFAULT 0,weight REAL NOT NULL DEFAULT 0)")
   db.execSQL("CREATE TABLE product_price_variants(id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER NOT NULL,label TEXT NOT NULL,price REAL NOT NULL,FOREIGN KEY(product_id) REFERENCES products(id))")
-  db.execSQL("CREATE TABLE clients(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,document TEXT,address TEXT)")
+  db.execSQL("CREATE TABLE clients(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,document TEXT,address TEXT,phone TEXT NOT NULL DEFAULT '',email TEXT NOT NULL DEFAULT '',notes TEXT NOT NULL DEFAULT '',is_supplier INTEGER NOT NULL DEFAULT 0,is_driver INTEGER NOT NULL DEFAULT 0,is_carrier INTEGER NOT NULL DEFAULT 0)")
+  db.execSQL("CREATE TABLE client_addresses(id INTEGER PRIMARY KEY AUTOINCREMENT,client_id INTEGER NOT NULL,label TEXT NOT NULL DEFAULT 'Principal',address TEXT NOT NULL,ubigeo TEXT NOT NULL DEFAULT '',is_main INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(client_id) REFERENCES clients(id))")
+  db.execSQL("CREATE INDEX idx_client_addresses_client ON client_addresses(client_id)")
   db.execSQL("CREATE TABLE quotes(id INTEGER PRIMARY KEY AUTOINCREMENT,client TEXT,product TEXT,qty INTEGER,unit_price REAL,discount REAL,igv INTEGER,currency TEXT,total REAL,status TEXT,created TEXT,product_photo TEXT,discount_amount REAL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO',product_id INTEGER,include_product_photo INTEGER NOT NULL DEFAULT 1)")
   db.execSQL("CREATE TABLE movements(id INTEGER PRIMARY KEY AUTOINCREMENT,product TEXT,qty INTEGER,reason TEXT,created TEXT)")
  }
@@ -65,6 +67,19 @@ class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,5) {
   if(oldVersion<5){
    // Historial previo conserva su comportamiento original de incluir fotografías.
    db.execSQL("ALTER TABLE quotes ADD COLUMN include_product_photo INTEGER NOT NULL DEFAULT 1")
+  }
+  if(oldVersion<6){
+   // No se eliminan clientes ni sus direcciones históricas.
+   db.execSQL("ALTER TABLE clients ADD COLUMN phone TEXT NOT NULL DEFAULT ''")
+   db.execSQL("ALTER TABLE clients ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+   db.execSQL("ALTER TABLE clients ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+   db.execSQL("ALTER TABLE clients ADD COLUMN is_supplier INTEGER NOT NULL DEFAULT 0")
+   db.execSQL("ALTER TABLE clients ADD COLUMN is_driver INTEGER NOT NULL DEFAULT 0")
+   db.execSQL("ALTER TABLE clients ADD COLUMN is_carrier INTEGER NOT NULL DEFAULT 0")
+   db.execSQL("CREATE TABLE IF NOT EXISTS client_addresses(id INTEGER PRIMARY KEY AUTOINCREMENT,client_id INTEGER NOT NULL,label TEXT NOT NULL DEFAULT 'Principal',address TEXT NOT NULL,ubigeo TEXT NOT NULL DEFAULT '',is_main INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(client_id) REFERENCES clients(id))")
+   db.execSQL("CREATE INDEX IF NOT EXISTS idx_client_addresses_client ON client_addresses(client_id)")
+   // Las direcciones antes guardadas en clients.address quedan como direcciones principales.
+   db.execSQL("INSERT INTO client_addresses(client_id,label,address,ubigeo,is_main) SELECT id,'Principal',address,'',1 FROM clients WHERE TRIM(COALESCE(address,''))<>''")
   }
  }
 }
