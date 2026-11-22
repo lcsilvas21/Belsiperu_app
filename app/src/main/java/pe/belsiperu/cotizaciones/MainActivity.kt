@@ -22,12 +22,12 @@ import java.net.HttpURLConnection
 import java.net.URL
 import org.json.JSONObject
 
-class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,4) {
+class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,5) {
  override fun onCreate(db:SQLiteDatabase) {
   db.execSQL("CREATE TABLE products(id INTEGER PRIMARY KEY AUTOINCREMENT,code TEXT,name TEXT,price REAL,currency TEXT,stock INTEGER,min_stock INTEGER,photo_uri TEXT,kind TEXT NOT NULL DEFAULT 'PRODUCTO',barcode TEXT NOT NULL DEFAULT '',category TEXT NOT NULL DEFAULT '',brand TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT 'UNIDADES',purchase_price REAL NOT NULL DEFAULT 0,sale_includes_igv INTEGER NOT NULL DEFAULT 0,purchase_includes_igv INTEGER NOT NULL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'GRAVADO',isc_type TEXT NOT NULL DEFAULT 'NO APLICA',sunat_code TEXT NOT NULL DEFAULT '',icbper INTEGER NOT NULL DEFAULT 0,sell_without_stock INTEGER NOT NULL DEFAULT 0,weight REAL NOT NULL DEFAULT 0)")
   db.execSQL("CREATE TABLE product_price_variants(id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER NOT NULL,label TEXT NOT NULL,price REAL NOT NULL,FOREIGN KEY(product_id) REFERENCES products(id))")
   db.execSQL("CREATE TABLE clients(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,document TEXT,address TEXT)")
-  db.execSQL("CREATE TABLE quotes(id INTEGER PRIMARY KEY AUTOINCREMENT,client TEXT,product TEXT,qty INTEGER,unit_price REAL,discount REAL,igv INTEGER,currency TEXT,total REAL,status TEXT,created TEXT,product_photo TEXT,discount_amount REAL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO',product_id INTEGER)")
+  db.execSQL("CREATE TABLE quotes(id INTEGER PRIMARY KEY AUTOINCREMENT,client TEXT,product TEXT,qty INTEGER,unit_price REAL,discount REAL,igv INTEGER,currency TEXT,total REAL,status TEXT,created TEXT,product_photo TEXT,discount_amount REAL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO',product_id INTEGER,include_product_photo INTEGER NOT NULL DEFAULT 1)")
   db.execSQL("CREATE TABLE movements(id INTEGER PRIMARY KEY AUTOINCREMENT,product TEXT,qty INTEGER,reason TEXT,created TEXT)")
  }
  override fun onUpgrade(db:SQLiteDatabase,oldVersion:Int,newVersion:Int) {
@@ -60,6 +60,10 @@ class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,4) {
    db.execSQL("ALTER TABLE quotes ADD COLUMN tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO'")
    db.execSQL("ALTER TABLE quotes ADD COLUMN product_id INTEGER")
   }
+  if(oldVersion<5){
+   // Historial previo conserva su comportamiento original de incluir fotografías.
+   db.execSQL("ALTER TABLE quotes ADD COLUMN include_product_photo INTEGER NOT NULL DEFAULT 1")
+  }
  }
 }
 class MainActivity:Activity() {
@@ -90,9 +94,11 @@ class MainActivity:Activity() {
   var productName=""
   var productId:Long?=null
   val snapshot=db.readableDatabase.rawQuery(
-   "SELECT product,product_photo,product_id FROM quotes WHERE id=?",arrayOf(quoteId.toString()))
+   "SELECT product,product_photo,product_id,include_product_photo FROM quotes WHERE id=?",arrayOf(quoteId.toString()))
   try{
    if(snapshot.moveToFirst()){
+    // La elección de cada cotización prevalece sobre las fotos existentes en el catálogo.
+    if(snapshot.getInt(3)==0)return null
     productName=snapshot.getString(0)?:""
     val previous=snapshot.getString(1)
     if(!snapshot.isNull(2))productId=snapshot.getLong(2)
