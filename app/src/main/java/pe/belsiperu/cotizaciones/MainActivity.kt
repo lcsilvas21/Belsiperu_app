@@ -680,6 +680,7 @@ class MainActivity:Activity() {
    val taxable=if(igv)total/1.18 else total
    val tax=(total-taxable).coerceAtLeast(0.0)
    val discount=(qty*price*discountPct/100.0+discountAmount).coerceAtLeast(0.0)
+   val productPicture=loadQuoteProductBitmap(id)
    var code="";var document="";var address=""
    val prod=db.readableDatabase.rawQuery("SELECT code FROM products WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(item))
    if(prod.moveToFirst())code=prod.getString(0)?:""
@@ -725,10 +726,11 @@ class MainActivity:Activity() {
    val literal="SON "+words(cents/100)+" Y "+(cents%100).toString().padStart(2,'0')+"/100 "+currName
 
    val ticket=pdfPaper=="Ticket 80 mm"
+   val extraTicketHeight=if(ticket && productPicture!=null)105f else 0f
    val pageWidth=if(ticket)227 else if(pdfPaper=="A5 horizontal")595 else 842
-   val pageHeight=if(ticket)825 else if(pdfPaper=="A5 horizontal")420 else 595
+   val pageHeight=if(ticket)825+extraTicketHeight.toInt() else if(pdfPaper=="A5 horizontal")420 else 595
    val designW=if(ticket)227f else 842f
-   val designH=if(ticket)825f else 595f
+   val designH=if(ticket)825f+extraTicketHeight else 595f
    val scale=minOf(pageWidth/designW,pageHeight/designH)
    val pdf=android.graphics.pdf.PdfDocument()
    try{
@@ -823,7 +825,13 @@ class MainActivity:Activity() {
      stroke(9f,319f,218f,319f)
      text("PRODUCTO",9f,337f,9.5f,true)
      text("CÓDIGO: "+code,9f,350f,8f)
-     wrapped(item,207f,9f,4).forEachIndexed{i,t->text(t,9f,365f+i*12f,9f)}
+     wrapped(item,207f,9f,if(productPicture!=null)2 else 4)
+      .forEachIndexed{i,t->text(t,9f,365f+i*12f,9f)}
+     if(productPicture!=null){
+      drawProductImage(canvas,productPicture,RectF(68f,385f,159f,485f))
+     }
+     canvas.save()
+     canvas.translate(0f,extraTicketHeight)
      stroke(9f,422f,218f,422f)
      text("CANT.: "+fmt(qty),9f,438f,8.5f)
      right("P. UNIT.: "+money+" "+fmt(price),218f,438f,8.5f)
@@ -847,6 +855,7 @@ class MainActivity:Activity() {
       .forEachIndexed{i,t->center(t,9f,218f,714f+i*12f,8.2f)}
      center("BELSIPERU",9f,218f,776f,10f,true)
      center("Proforma comercial. No es comprobante tributario.",9f,218f,793f,6.5f)
+     canvas.restore()
     } else {
      // Composición apaisada para A4 y A5: la tabla ocupa el ancho útil de la hoja.
      val left=20f;val rightEdge=822f
@@ -893,8 +902,11 @@ class MainActivity:Activity() {
      cell(0,"1",197f,1)
      cell(1,"UNIDADES",197f,1,8f)
      cell(2,code,197f,1,8.5f)
-     wrapped(item,xs[4]-xs[3]-9f,9f,16)
+     wrapped(item,xs[4]-xs[3]-9f,9f,if(productPicture!=null)4 else 16)
       .forEachIndexed{i,t->if(197f+i*10f<bottom-3f)cell(3,t,197f+i*10f,0,9f)}
+     if(productPicture!=null){
+      drawProductImage(canvas,productPicture,RectF(xs[3]+12f,247f,xs[3]+156f,341f))
+     }
      cell(4,fmt(qty),197f,2,9f)
      cell(5,fmt(price),197f,2,9f)
      cell(6,fmt(discount),197f,2,9f)
@@ -926,6 +938,7 @@ class MainActivity:Activity() {
      center("Proforma comercial emitida por BELSIPERU. No es comprobante de pago electrónico.",left,rightEdge,591f,7.2f)
     }
     canvas.restore()
+    productPicture?.recycle()
     pdf.finishPage(page)
     pdf.writeTo(out)
    }finally{pdf.close()}
