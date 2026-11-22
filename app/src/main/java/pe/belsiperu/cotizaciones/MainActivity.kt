@@ -44,8 +44,11 @@ class MainActivity:Activity() {
  private val border=Color.rgb(225,233,235)
  private var pendingPdf:Long?=null
  private var pendingPhotoProduct:Long?=null
- private var pdfPaper="A4 vertical"
- private var pdfStyle="Moderno"
+ private var pdfPaper="Carta vertical"
+ private var pdfStyle="Proforma BELSIPERU"
+ private var pdfExpiry=""
+ private var pdfSeller="BELSIPERU"
+ private var pdfPayment="CONTADO"
  private fun today()=SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.getDefault()).format(Date())
 
  private fun d(v:Int)=(v*resources.displayMetrics.density+0.5f).toInt()
@@ -387,19 +390,35 @@ class MainActivity:Activity() {
   }
   startActivityForResult(intent,92)
  }
+
  private fun pdfOptions(id:Long){
   screen("Opciones PDF");button("← Cotizaciones"){quotes()}
-  label("Diseño");val style=choice(listOf("Moderno","Corporativo","Prémium"))
-  label("Tamaño de papel");val paper=choice(listOf("A4 vertical","A4 horizontal","A5 vertical","A5 horizontal","Ticket 80 mm"))
+  info("Modelo de proforma BELSIPERU","Por defecto se usa el diseño del PDF de referencia: logotipo, tabla negra, totales y datos bancarios.")
+  label("Diseño")
+  val style=choice(listOf("Proforma BELSIPERU","Moderno","Corporativo","Prémium"))
+  label("Tamaño de papel")
+  val paper=choice(listOf("Carta vertical","A4 vertical","A4 horizontal","A5 vertical","A5 horizontal","Ticket 80 mm"))
+  label("Vencimiento de la proforma (dd/MM/aaaa, opcional)")
+  val expiry=input("Ejemplo: 30/11/2026")
+  expiry.setText(pdfExpiry)
+  label("Responsable")
+  val seller=input("Usuario o vendedor")
+  seller.setText(pdfSeller)
+  label("Condición de pago")
+  val payment=input("CONTADO / CRÉDITO")
+  payment.setText(pdfPayment)
   button("Generar PDF"){
    pdfStyle=style.selectedItem.toString()
    pdfPaper=paper.selectedItem.toString()
+   pdfExpiry=expiry.text.toString().trim()
+   pdfSeller=seller.text.toString().trim().ifEmpty{"BELSIPERU"}
+   pdfPayment=payment.text.toString().trim().ifEmpty{"CONTADO"}
    exportPdf(id)
   }
  }
  private fun exportPdf(id:Long){
   pendingPdf=id
-  val intent=Intent(Intent.ACTION_CREATE_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="application/pdf";putExtra(Intent.EXTRA_TITLE,"BELSIPERU_COT-${id.toString().padStart(6,'0')}.pdf")}
+  val intent=Intent(Intent.ACTION_CREATE_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="application/pdf";putExtra(Intent.EXTRA_TITLE,if(pdfStyle=="Proforma BELSIPERU")"BELSIPERU_PROFORMA_0002-${id.toString().padStart(7,'0')}.pdf" else "BELSIPERU_COT-${id.toString().padStart(6,'0')}.pdf")}
   startActivityForResult(intent,91)
  }
  @Deprecated("Legacy activity result used for minimal SDK example")
@@ -420,7 +439,219 @@ class MainActivity:Activity() {
    try{contentResolver.openOutputStream(data.data!!)?.use{stream->writePdf(id,stream)};toast("PDF guardado")}catch(e:Exception){toast("Error PDF: ${e.message}")}
   }
  }
+
+ // Diseño de proforma comercial basado en el PDF de referencia del usuario.
+ // Papel carta: 612x792 puntos (el documento proporcionado tiene este tamaño).
+ private fun writePdfProforma(id:Long,out:java.io.OutputStream){
+  val c=db.readableDatabase.rawQuery(
+   "SELECT client,product,qty,unit_price,discount,igv,currency,total,created,product_photo,discount_amount FROM quotes WHERE id=?",
+   arrayOf(id.toString()))
+  if(!c.moveToFirst()){c.close();throw IllegalStateException("No existe esta cotización")}
+  try{
+   val client=c.getString(0)?:"Cliente general"
+   val product=c.getString(1)?:"Producto"
+   val qty=c.getInt(2).toDouble()
+   val unitPrice=c.getDouble(3)
+   val pct=c.getDouble(4).coerceIn(0.0,100.0)
+   val applyTax=c.getInt(5)==1
+   val currency=c.getString(6)?:"PEN"
+   val total=c.getDouble(7)
+   val created=c.getString(8)?:""
+   val fixed=c.getDouble(10).coerceAtLeast(0.0)
+   val net=if(applyTax)total/1.18 else total
+   val tax=(total-net).coerceAtLeast(0.0)
+   val discount=(qty*unitPrice*pct/100.0+fixed).coerceAtLeast(0.0)
+   var code="";var document="";var address=""
+   val prod=db.readableDatabase.rawQuery(
+    "SELECT code FROM products WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(product))
+   if(prod.moveToFirst())code=prod.getString(0)?:""
+   prod.close()
+   val cc=db.readableDatabase.rawQuery(
+    "SELECT document,address FROM clients WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(client))
+   if(cc.moveToFirst()){document=cc.getString(0)?:"";address=cc.getString(1)?:""}
+   cc.close()
+   val curDate=try{
+    val input=SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US)
+    val d=input.parse(created)
+    if(d==null)created.take(10) else SimpleDateFormat("dd/MM/yyyy",Locale("es","PE")).format(d)
+   }catch(_:Exception){created.take(10)}
+   val curTime=try{
+    val d=SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).parse(created)
+    if(d==null)"" else SimpleDateFormat("hh:mm a",Locale.US).format(d)
+   }catch(_:Exception){""}
+   val expiry=if(pdfExpiry.isBlank())"POR DEFINIR" else pdfExpiry
+   val docTag=when(document.length){11->"RUC ";8->"DNI ";else->""}
+   val money=if(currency=="USD")"US$" else "S/"
+   val nameCurrency=if(currency=="USD")"DÓLARES" else "SOLES"
+   fun amount(n:Double)=String.format(Locale.US,"%,.2f",n)
+   val pdf=android.graphics.pdf.PdfDocument()
+   val page=pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(612,792,1).create())
+   val canvas=page.canvas
+   val p=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=Color.BLACK;typeface=Typeface.DEFAULT}
+   fun font(size:Float,bold:Boolean=false,color:Int=Color.BLACK){
+    p.textSize=size;p.color=color;p.style=Paint.Style.FILL
+    p.typeface=if(bold)Typeface.create(Typeface.DEFAULT,Typeface.BOLD) else Typeface.DEFAULT
+    p.isFakeBoldText=false
+   }
+   fun text(value:String,x:Float,y:Float,size:Float=9f,bold:Boolean=false,color:Int=Color.BLACK){
+    font(size,bold,color);canvas.drawText(value,x,y,p)
+   }
+   fun fit(value:String,x:Float,y:Float,maxW:Float,size:Float=9f,bold:Boolean=false){
+    var sz=size
+    font(sz,bold)
+    while(sz>6.5f && p.measureText(value)>maxW){sz-=0.3f;font(sz,bold)}
+    var t=value
+    while(t.isNotEmpty() && p.measureText(t)>maxW-5f)t=t.dropLast(1)
+    if(t!=value)t=t.trimEnd()+"…"
+    canvas.drawText(t,x,y,p)
+   }
+   fun center(value:String,x:Float,right:Float,y:Float,size:Float=9f,bold:Boolean=false){
+    font(size,bold);canvas.drawText(value,x+(right-x-p.measureText(value))/2f,y,p)
+   }
+   fun right(value:String,right:Float,y:Float,size:Float=9f,bold:Boolean=false){
+    font(size,bold);canvas.drawText(value,right-p.measureText(value),y,p)
+   }
+   fun line(x1:Float,y1:Float,x2:Float,y2:Float,width:Float=0.8f){
+    p.color=Color.BLACK;p.style=Paint.Style.STROKE;p.strokeWidth=width
+    canvas.drawLine(x1,y1,x2,y2,p);p.style=Paint.Style.FILL
+   }
+   fun rect(x:Float,y:Float,right:Float,bottom:Float,fill:Int?=null){
+    p.style=Paint.Style.FILL;p.color=fill?:Color.BLACK
+    canvas.drawRect(x,y,right,bottom,p)
+   }
+   fun wrap(value:String,maxWidth:Float,size:Float,maxLines:Int):List<String>{
+    font(size)
+    val result=mutableListOf<String>()
+    var current=""
+    val words=value.replace("\n"," ").split(" ").filter{it.isNotBlank()}
+    for(word in words){
+     val proposed=if(current.isEmpty())word else current+" "+word
+     if(current.isNotEmpty()&&p.measureText(proposed)>maxWidth){
+      result.add(current);current=word
+     }else current=proposed
+     if(result.size>=maxLines)break
+    }
+    if(result.size<maxLines && current.isNotEmpty())result.add(current)
+    return result.take(maxLines)
+   }
+   fun words(v:Int):String{
+    if(v==0)return "CERO"
+    val u=arrayOf("","UN","DOS","TRES","CUATRO","CINCO","SEIS","SIETE","OCHO","NUEVE",
+     "DIEZ","ONCE","DOCE","TRECE","CATORCE","QUINCE","DIECISÉIS","DIECISIETE","DIECIOCHO","DIECINUEVE",
+     "VEINTE","VEINTIÚN","VEINTIDÓS","VEINTITRÉS","VEINTICUATRO","VEINTICINCO",
+     "VEINTISÉIS","VEINTISIETE","VEINTIOCHO","VEINTINUEVE")
+    val tens=arrayOf("","","","TREINTA","CUARENTA","CINCUENTA","SESENTA","SETENTA","OCHENTA","NOVENTA")
+    val hundreds=arrayOf("","","DOSCIENTOS","TRESCIENTOS","CUATROCIENTOS","QUINIENTOS",
+     "SEISCIENTOS","SETECIENTOS","OCHOCIENTOS","NOVECIENTOS")
+    fun below100(n:Int):String=if(n<30)u[n] else tens[n/10]+(if(n%10==0)"" else " Y "+u[n%10])
+    fun below1000(n:Int):String{
+     if(n<100)return below100(n)
+     if(n==100)return "CIEN"
+     val stem=if(n/100==1)"CIENTO" else hundreds[n/100]
+     return stem+(if(n%100==0)"" else " "+below100(n%100))
+    }
+    if(v<1000)return below1000(v)
+    if(v<1000000){
+     val th=v/1000;val rest=v%1000
+     val first=if(th==1)"MIL" else below1000(th)+" MIL"
+     return first+(if(rest==0)"" else " "+below1000(rest))
+    }
+    return v.toString()
+   }
+   val cents=(total.coerceAtLeast(0.0)*100).roundToInt()
+   val literal="SON "+words(cents/100)+" Y "+(cents%100).toString().padStart(2,'0')+"/100 "+nameCurrency
+
+   // Encabezado: logotipo, razón social, dirección y recuadro de proforma.
+   try{
+    assets.open("belsiperu_logo.png").use{stream->
+     val bitmap=BitmapFactory.decodeStream(stream)
+     if(bitmap!=null){
+      canvas.drawBitmap(bitmap,null,RectF(15f,40f,106f,101f),Paint(Paint.ANTI_ALIAS_FLAG))
+      bitmap.recycle()
+     }
+    }
+   }catch(_:Exception){}
+   text("BELSIPERU S.A.C",116f,34f,16f,true)
+   fit("PRINCIPAL » JR. LOS TOPACIOS NRO. 2125 INT. T18",116f,50f,226f,9f)
+   fit("COO. LA HUAYRONA - LIMA LIMA SAN JUAN DE",116f,61f,226f,9f)
+   text("LURIGANCHO",116f,72f,9f)
+   text("LO MEJOR EN MAQUINAS Y HERRAMIENTAS",116f,91f,9f)
+   text("INDUSTRIALES PARA EL PERÚ",116f,102f,9f)
+   rect(348f,44f,544f,74f,Color.rgb(238,238,238))
+   line(347.5f,15f,544f,15f,1f);line(347.5f,103f,544f,103f,1f)
+   line(347.5f,15f,347.5f,103f,1f);line(544f,15f,544f,103f,1f)
+   center("RUC 20605060634",347.5f,544f,35f,14f)
+   center("PROFORMA",347.5f,544f,65f,17f,true)
+   center("0002-"+id.toString().padStart(7,'0'),347.5f,544f,96f,14f)
+   // Ficha cliente y emisión.
+   text("DOCUMENTO",15f,133f,9f,true)
+   text("CLIENTE",15f,145f,9f,true)
+   text("DIRECCIÓN",15f,157f,9f,true)
+   fit(if(document.isBlank())"—" else docTag+document,90f,133f,257f,8.7f)
+   fit(client,90f,145f,266f,8.7f)
+   val addrLines=wrap(if(address.isBlank())"NO REGISTRADA" else address,265f,8.1f,2)
+   addrLines.forEachIndexed{index,v->fit(v,90f,157f+9.0f*index,266f,8.1f)}
+   text("FECHA EMISIÓN",366f,133f,8.5f,true);right(curDate,532f,133f,8.5f)
+   text("FECHA VENCIMIENTO",366f,145f,8.3f,true);right(expiry,532f,145f,8.2f)
+   text("MONEDA",366f,157f,8.5f,true);right(if(currency=="USD")"DÓLARES" else "SOLES",532f,157f,8.5f)
+   // Cabecera negra y cuadrícula alta, igual al modelo suministrado.
+   val xs=floatArrayOf(15f,37f,87f,135f,360f,400f,455f,501f,544f)
+   rect(15f,186f,544f,200f,Color.BLACK)
+   val heads=arrayOf("Nº","UNIDAD","CÓDIGO","DESCRIPCIÓN","CANT.","V. UNIT.","DSCTO","TOTAL")
+   for(k in heads.indices){
+    val x=xs[k];val rr=xs[k+1];font(if(k==3)9.3f else 8.7f,true,Color.WHITE)
+    canvas.drawText(heads[k],x+(rr-x-p.measureText(heads[k]))/2f,197f,p)
+   }
+   for(x in xs)line(x,200f,x,473f,0.8f)
+   line(15f,473f,544f,473f,0.8f)
+   text("1",23f,210f,8f)
+   text("UNIDADES",40f,210f,7.9f)
+   fit(code,91f,210f,39f,8f)
+   wrap(product,217f,7.8f,29).forEachIndexed{k,v->text(v,139f,210f+k*8.5f,7.8f)}
+   right(amount(qty),397f,210f,8.3f)
+   right(amount(unitPrice),451f,210f,8.2f)
+   right(amount(discount),498f,210f,8f)
+   right(amount(net),540f,210f,8.2f)
+   // Total en letras y resumen.
+   line(15f,490f,544f,490f,0.8f)
+   line(15f,473f,15f,490f,0.8f);line(544f,473f,544f,490f,0.8f)
+   var literalSize=9f;font(literalSize)
+   while(literalSize>6.4f && p.measureText(literal)>512f){literalSize-=0.2f;font(literalSize)}
+   center(literal,15f,544f,485f,literalSize)
+   line(15f,490f,15f,542f,0.8f);line(544f,490f,544f,542f,0.8f)
+   line(15f,542f,544f,542f,0.8f)
+   right(if(applyTax)"SUBTOTAL" else "SIN IGV",421f,507f,9f,true)
+   right("I.G.V. 18%",421f,520f,9f,true)
+   right("TOTAL",421f,533f,10f,true)
+   text(money,447f,507f,9f)
+   text(money,447f,520f,9f)
+   text(money,447f,533f,10f,true)
+   right(amount(net),537f,507f,9f)
+   right(amount(tax),537f,520f,9f)
+   right(amount(total),537f,533f,10f,true)
+   // Información comercial y bancaria de la empresa.
+   text("USUARIO",15f,564f,9f,true)
+   text("CONDICIÓN DE PAGO",15f,577f,9f,true)
+   text("CUENTAS BANCARIAS",15f,590f,9f,true)
+   fit(pdfSeller+" - "+curDate+" "+curTime,156f,564f,373f,8.8f)
+   fit(pdfPayment,156f,577f,373f,9f)
+   text("BELSIPERU S.A.C",156f,590f,9f)
+   text("Cuenta Corriente Soles Interbank: 20030088110506",156f,613f,8.4f)
+   text("Interbancario Soles Interbank: 2003008810506",156f,624f,8.4f)
+   text("00320000300881050636",156f,635f,8.4f)
+   text("Cuenta Corriente Dólares Interbank: 2003008810513",156f,658f,8.4f)
+   text("Interbancario Dólares Interbank: 2003008810513",156f,669f,8.4f)
+   text("00320000300881051332",156f,680f,8.4f)
+   center("Los productos en Stock, la entrega será realizada dentro de las 48 Horas, salvo venta Previa.",15f,544f,710f,8.2f)
+   center("BELSIPERU S.A.C.",15f,544f,753f,11f,true)
+   center("Proforma comercial emitida por BELSIPERU; no es comprobante de pago electrónico.",15f,544f,766f,7.5f)
+   pdf.finishPage(page)
+   try{pdf.writeTo(out)}finally{pdf.close()}
+  }finally{c.close()}
+ }
+
  private fun writePdf(id:Long,out:java.io.OutputStream){
+  if(pdfStyle=="Proforma BELSIPERU"){writePdfProforma(id,out);return}
   val c=db.readableDatabase.rawQuery("SELECT client,product,qty,unit_price,discount,igv,currency,total,created,product_photo,discount_amount FROM quotes WHERE id=?",arrayOf(id.toString()))
   if(!c.moveToFirst()){c.close();return}
   val size=when(pdfPaper){
