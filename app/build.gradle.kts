@@ -11,8 +11,8 @@ android {
         applicationId = "pe.belsiperu.cotizaciones"
         minSdk = 26
         targetSdk = 35
-        versionCode = 12
-        versionName = "1.4"
+        versionCode = 13
+        versionName = "1.5"
     }
 
     // La aplicación de prueba se instala junto a la original.
@@ -30,4 +30,9 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+}
+
+dependencies {
+    // Escaneo mediante cámara; Google Play Services gestiona el permiso.
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 }
