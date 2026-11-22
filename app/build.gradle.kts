@@ -11,8 +11,8 @@ android {
         applicationId = "pe.belsiperu.cotizaciones"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "1.16"
+        versionCode = 25
+        versionName = "1.17"
     }
 
     // Instalación de prueba independiente: las bases SQLite de otras versiones no se comparten.
