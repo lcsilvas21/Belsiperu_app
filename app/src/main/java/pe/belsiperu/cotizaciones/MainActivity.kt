@@ -158,7 +158,7 @@ class MainActivity:Activity() {
     return serie+"-"+number.toString().padStart(7,'0')
    }
   }finally{cursor.close()}
-  return quoteDisplayNumber(id)
+  return "0002-"+id.toString().padStart(7,'0')
  }
  private fun activeQuoteSequence():Pair<String,Long>{
   val prefs=getSharedPreferences("quote_sequence",MODE_PRIVATE)
@@ -663,11 +663,79 @@ class MainActivity:Activity() {
    "Personaliza el encabezado, el logotipo y la información comercial de las proformas PDF.")
   button("🏢 Empresa · Datos para el encabezado"){companySettings()}
   button("🖨 Impresión · Bancos, cabecera y pie de página"){printingSettings()}
+  button("🔢 Numeración automática de cotizaciones"){quoteNumberSettings()}
   heading("Otros ajustes")
   button("Configurar consulta RUC / DNI"){rucSettings()}
   info("Protección de datos","Mantén protegidas tus claves y haz copias de seguridad del catálogo. Esta APK de prueba guarda su configuración en el dispositivo.",Color.rgb(169,105,19))
   button("Bloquear aplicación"){lock()}
   button("Volver al inicio"){home()}
+ }
+
+ private fun quoteNumberSettings(){
+  screen("Configuración · Numeración")
+  button("← Configuración"){settings()}
+  heading("Numeración personalizada y automática",
+   "Define la serie y el próximo número. Cada nueva cotización usa el siguiente correlativo, sin alterar las emitidas.")
+  val current=activeQuoteSequence()
+  label("Serie (1 a 6 dígitos)")
+  val serie=input("Ejemplo: 0002")
+  serie.inputType=InputType.TYPE_CLASS_NUMBER
+  serie.filters=arrayOf(android.text.InputFilter.LengthFilter(6))
+  serie.setText(current.first)
+  label("Próximo correlativo")
+  val next=input("Ejemplo: 50009")
+  next.inputType=InputType.TYPE_CLASS_NUMBER
+  next.filters=arrayOf(android.text.InputFilter.LengthFilter(7))
+  next.setText(current.second.toString())
+  val preview=line("Próxima cotización: "+current.first+"-"+
+   current.second.toString().padStart(7,'0'),17f,navy,true)
+  body.addView(preview)
+  fun refreshPreview(){
+   val serieText=serie.text.toString()
+   val n=next.text.toString().toLongOrNull()
+   preview.text="Próxima cotización: "+serieText+"-"+
+    (n?:0L).toString().padStart(7,'0')
+  }
+  for(view in listOf(serie,next)){
+   view.addTextChangedListener(object:TextWatcher{
+    override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+    override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){refreshPreview()}
+    override fun afterTextChanged(s:Editable?){}
+   })
+  }
+  info("Ejemplo",
+   "Serie 0002, próximo número 50009 → 0002-0005009. El siguiente será 0002-0005010. Cada serie lleva su propio correlativo.")
+  button("✓ Guardar numeración automática"){
+   val newSerie=serie.text.toString().trim()
+   val number=next.text.toString().toLongOrNull()
+   if(!newSerie.matches(Regex("[0-9]{1,6}"))){
+    serie.error="Usa únicamente 1 a 6 dígitos.";return@button
+   }
+   if(number==null||number !in 1L..9999999L){
+    next.error="El correlativo debe estar entre 1 y 9999999.";return@button
+   }
+   val database=db.writableDatabase
+   try{
+    database.beginTransaction()
+    val used=database.rawQuery(
+     "SELECT COALESCE(MAX(quote_number),0) FROM quotes WHERE series=?",
+     arrayOf(newSerie))
+    val max=try{if(used.moveToFirst())used.getLong(0) else 0L}
+     finally{used.close()}
+    if(number<=max)throw IllegalArgumentException(
+     "El próximo número debe ser mayor que "+max+" en esta serie.")
+    database.execSQL(
+     "INSERT OR REPLACE INTO quote_sequences(series,next_number) VALUES(?,?)",
+     arrayOf(newSerie,number))
+    database.setTransactionSuccessful()
+   }catch(e:Exception){
+    toast("No se pudo guardar: "+(e.message?:"Número inválido"));return@button
+   }finally{if(database.inTransaction())database.endTransaction()}
+   getSharedPreferences("quote_sequence",MODE_PRIVATE)
+    .edit().putString("active_series",newSerie).apply()
+   toast("Serie activa: "+newSerie+"-"+number.toString().padStart(7,'0'))
+   settings()
+  }
  }
  private fun companySettings(){
   screen("Configuración · Empresa")
