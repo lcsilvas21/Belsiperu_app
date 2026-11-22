@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - feat/belsiperu-v2-redisenio
+      - feat/escaneo-codigo-barras-camara
   pull_request:
     branches:
       - main
