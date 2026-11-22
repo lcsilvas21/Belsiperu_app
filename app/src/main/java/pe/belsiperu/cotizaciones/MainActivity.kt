@@ -153,6 +153,7 @@ class MainActivity:Activity() {
   try{drawProductImage(canvas,bmp,rect)}finally{bmp.recycle()}
  }
  private fun pdfTextLines(content:String,maxWidth:Float,size:Float,limit:Int=16):List<String>{
+  if(content.isBlank())return emptyList()
   val p=Paint(Paint.ANTI_ALIAS_FLAG).apply{textSize=size;typeface=Typeface.DEFAULT}
   val result=mutableListOf<String>()
   for(part in content.replace("\r","").split("\n")){
