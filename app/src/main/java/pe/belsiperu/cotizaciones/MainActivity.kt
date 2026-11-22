@@ -3738,8 +3738,9 @@ class MainActivity:Activity() {
      .joinToString(" · "),descWidth,tableFont-0.7f,3)
     val showPicture=item.includePhoto&&!item.photoUri.isNullOrBlank()
     val photoHeight=if(showPicture)35f else 0f
+    val discountHeight=if(item.discountPct>0.0||item.discountAmount>0.0)10f else 0f
     val rowHeight=maxOf(38f,10f+detailLines.size*10f+
-     brandLines.size*9f+photoHeight)
+     brandLines.size*9f+photoHeight+discountHeight)
     ensureSpace(rowHeight+5f)
     val top=y
     if(index%2==1)rect(margin,top,w-margin,top+rowHeight,light)
@@ -3772,10 +3773,12 @@ class MainActivity:Activity() {
      clipped(line,descX,descY,descWidth,tableFont-0.7f,false,subdued)
      descY+=9f
     }
-    if(!modern&&item.discountAmount>0.0){
-     clipped("Dcto. adicional: "+money(item.discountAmount),descX,descY,
-      descWidth,tableFont-0.8f,false,subdued)
-     descY+=9f
+    if(item.discountPct>0.0||item.discountAmount>0.0){
+     val discountCaption="Dcto.: "+pdfNumber(item.discountPct,1)+"%"+
+      if(item.discountAmount>0.0)" + "+money(item.discountAmount) else ""
+     clipped(discountCaption,descX,descY,descWidth,
+      tableFont-0.8f,false,subdued)
+     descY+=10f
     }
     if(showPicture){
      drawPhoto(item.photoUri,RectF(descX,descY+1f,descX+43f,descY+34f))
@@ -3845,7 +3848,7 @@ class MainActivity:Activity() {
     }
    }else{
     // Como en FULLTRADE: resumen verde horizontal y separadores punteados.
-    ensureSpace(123f)
+    ensureSpace(190f)
     y+=8f
     val greenBand=Color.rgb(83,232,51)
     paint.style=Paint.Style.FILL;paint.color=greenBand
