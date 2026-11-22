@@ -1214,7 +1214,7 @@ class MainActivity:Activity() {
  // el ticket de 80 mm usa columnas estrechas y una página larga de recibo.
  private fun writePdfProformaAdaptada(id:Long,out:java.io.OutputStream){
   val cur=db.readableDatabase.rawQuery(
-    "SELECT client,product,qty,unit_price,discount,igv,currency,total,created,discount_amount FROM quotes WHERE id=?",
+    "SELECT client,product,qty,unit_price,discount,igv,currency,total,created,discount_amount,tax_affectation FROM quotes WHERE id=?",
     arrayOf(id.toString()))
   if(!cur.moveToFirst()){cur.close();throw IllegalStateException("Cotización no encontrada")}
   try{
@@ -1228,6 +1228,7 @@ class MainActivity:Activity() {
    val total=cur.getDouble(7)
    val rawDate=cur.getString(8)?:""
    val discountAmount=cur.getDouble(9).coerceAtLeast(0.0)
+   val taxLabel=if(igv)"GRAVADA" else if(cur.getString(10)=="EXONERADO")"EXONERADA" else "INAFECTO"
    val taxable=if(igv)total/1.18 else total
    val tax=(total-taxable).coerceAtLeast(0.0)
    val discount=(qty*price*discountPct/100.0+discountAmount).coerceAtLeast(0.0)
@@ -1389,7 +1390,7 @@ class MainActivity:Activity() {
      text("DESCUENTO",9f,454f,8.5f)
      right(money+" "+fmt(discount),218f,454f,8.5f)
      stroke(9f,466f,218f,466f)
-     text(if(igv)"GRAVADA" else "INAFECTO",9f,484f,9f,true);right(money+" "+fmt(taxable),218f,484f,9f)
+     text(taxLabel,9f,484f,9f,true);right(money+" "+fmt(taxable),218f,484f,9f)
      text("IGV 18%",9f,499f,9f,true);right(money+" "+fmt(tax),218f,499f,9f)
      text("TOTAL",9f,518f,11f,true);right(money+" "+fmt(total),218f,518f,11f,true)
      wrapped(literal,205f,7.6f,3).forEachIndexed{i,t->center(t,9f,218f,540f+i*10f,7.6f)}
@@ -1467,7 +1468,7 @@ class MainActivity:Activity() {
      val amountText=wrapped(literal,770f,9f,1).firstOrNull()?:""
      center(amountText,left,rightEdge,366f,9f)
      stroke(left,446f,rightEdge,446f)
-     text(if(igv)"GRAVADA" else "INAFECTO",610f,397f,10f,true)
+     text(taxLabel,610f,397f,10f,true)
      text("I.G.V. 18%",610f,415f,10f,true)
      text("TOTAL",610f,435f,11f,true)
      text(money,700f,397f,10f);text(money,700f,415f,10f);text(money,700f,435f,11f,true)
@@ -1502,7 +1503,7 @@ class MainActivity:Activity() {
    return
   }
   val c=db.readableDatabase.rawQuery(
-   "SELECT client,product,qty,unit_price,discount,igv,currency,total,created,product_photo,discount_amount FROM quotes WHERE id=?",
+   "SELECT client,product,qty,unit_price,discount,igv,currency,total,created,product_photo,discount_amount,tax_affectation FROM quotes WHERE id=?",
    arrayOf(id.toString()))
   if(!c.moveToFirst()){c.close();throw IllegalStateException("No existe esta cotización")}
   try{
@@ -1516,6 +1517,7 @@ class MainActivity:Activity() {
    val total=c.getDouble(7)
    val created=c.getString(8)?:""
    val fixed=c.getDouble(10).coerceAtLeast(0.0)
+   val taxLabel=if(applyTax)"GRAVADA" else if(c.getString(11)=="EXONERADO")"EXONERADA" else "INAFECTO"
    val net=if(applyTax)total/1.18 else total
    val tax=(total-net).coerceAtLeast(0.0)
    val discount=(qty*unitPrice*pct/100.0+fixed).coerceAtLeast(0.0)
@@ -1741,7 +1743,7 @@ class MainActivity:Activity() {
    center(literal,15.05f,544.62f,484.3f,literalSize)
    line(15.52f,489.12f,15.52f,541.8f,0.94f);line(544.15f,489.12f,544.15f,541.8f,0.94f)
    line(15.05f,541.33f,544.62f,541.33f,0.94f)
-   right(if(applyTax)"GRAVADA" else "INAFECTO",418f,506f,9.4f,true)
+   right(taxLabel,418f,506f,9.4f,true)
    right("I.G.V. 18%",418f,519.1f,9.4f,true)
    right("TOTAL",418f,532.3f,9.4f,true)
    text(money,447.7f,506f,9.4f)
