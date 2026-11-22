@@ -8,6 +8,7 @@ on:
       - feat/belsiperu-v2-redisenio
       - feat/escaneo-codigo-barras-camara
       - feat/consulta-dni-automatico
+      - feat/identificacion-automatica-ruc-dni
   pull_request:
     branches:
       - main
