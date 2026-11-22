@@ -2043,6 +2043,214 @@ class MainActivity:Activity() {
 
  // A4/A5 apaisados tienen una composición apaisada real;
  // el ticket de 80 mm usa columnas estrechas y una página larga de recibo.
+
+ private data class PdfQuoteLine(
+  val code:String,val name:String,val unit:String,val qty:Int,val price:Double,
+  val pct:Double,val discount:Double,val taxable:Boolean,val lineTotal:Double,
+  val photoUri:String?,val includePhoto:Boolean
+ )
+ private fun writePdfMultiple(id:Long,out:java.io.OutputStream){
+  val dbRead=db.readableDatabase
+  val header=dbRead.rawQuery(
+   "SELECT client,client_id,currency,total,created FROM quotes WHERE id=?",
+   arrayOf(id.toString()))
+  var client="";var clientId:Long?=null;var currency="PEN";var total=0.0;var created=""
+  try{
+   if(!header.moveToFirst())throw IllegalStateException("La cotización no existe.")
+   client=header.getString(0)?:"Cliente"
+   if(!header.isNull(1))clientId=header.getLong(1)
+   currency=header.getString(2)?:"PEN"
+   total=header.getDouble(3);created=header.getString(4)?:""
+  }finally{header.close()}
+  val customer=if(clientId!=null)dbRead.rawQuery(
+   "SELECT document,address FROM clients WHERE id=? LIMIT 1",arrayOf(clientId.toString()))
+  else dbRead.rawQuery("SELECT document,address FROM clients WHERE name=? ORDER BY id DESC LIMIT 1",
+   arrayOf(client))
+  var document="";var address=""
+  try{if(customer.moveToFirst()){
+   document=customer.getString(0)?:"";address=customer.getString(1)?:""
+  }}finally{customer.close()}
+  val items=mutableListOf<PdfQuoteLine>()
+  val cur=dbRead.rawQuery(
+   "SELECT code,name,unit,qty,unit_price,discount_pct,discount_amount,igv,line_total,photo_uri,include_product_photo FROM quote_items WHERE quote_id=? ORDER BY id",
+   arrayOf(id.toString()))
+  try{while(cur.moveToNext()){
+   items.add(PdfQuoteLine(cur.getString(0)?:"",cur.getString(1)?:"Producto",
+    cur.getString(2)?:"UNIDADES",cur.getInt(3),cur.getDouble(4),
+    cur.getDouble(5),cur.getDouble(6),cur.getInt(7)==1,
+    cur.getDouble(8),cur.getString(9),cur.getInt(10)==1))
+  }}finally{cur.close()}
+  if(items.isEmpty())throw IllegalStateException("No hay productos en esta cotización.")
+  val ticket=pdfPaper=="Ticket 80 mm"
+  val paper=when(pdfPaper){
+   "A4 horizontal"->Pair(842,595)
+   "A4 vertical"->Pair(595,842)
+   "A5 vertical"->Pair(420,595)
+   "A5 horizontal"->Pair(595,420)
+   "Ticket 80 mm"->Pair(227,minOf(12000,maxOf(620,340+items.size*75)))
+   else->Pair(612,792)
+  }
+  val width=paper.first.toFloat();val height=paper.second.toFloat()
+  val margin=if(ticket)10f else if(width<500)20f else 28f
+  val contentWidth=width-2f*margin
+  val pdf=android.graphics.pdf.PdfDocument()
+  val paint=Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+  val currencyMark=if(currency=="USD")"US$" else "S/"
+  val labelColor=Color.rgb(18,52,90)
+  fun fmt(value:Double)=String.format(Locale.US,"%,.2f",value)
+  fun font(size:Float,bold:Boolean=false,color:Int=Color.BLACK){
+   paint.style=Paint.Style.FILL;paint.color=color;paint.textSize=size
+   paint.typeface=Typeface.create(Typeface.DEFAULT,if(bold)Typeface.BOLD else Typeface.NORMAL)
+  }
+  var number=0
+  var page=pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(paper.first,paper.second,++number).create())
+  var canvas=page.canvas
+  fun text(value:String,x:Float,y:Float,size:Float=9f,bold:Boolean=false,color:Int=Color.BLACK){
+   font(size,bold,color);canvas.drawText(value,x,y,paint)
+  }
+  fun right(value:String,x:Float,y:Float,size:Float=9f,bold:Boolean=false,color:Int=Color.BLACK){
+   font(size,bold,color);canvas.drawText(value,x-paint.measureText(value),y,paint)
+  }
+  fun fitted(value:String,x:Float,y:Float,maxWidth:Float,size:Float=9f,bold:Boolean=false){
+   font(size,bold)
+   var shown=value.replace("\n"," ")
+   if(paint.measureText(shown)>maxWidth){
+    while(shown.isNotEmpty()&&paint.measureText(shown+"…")>maxWidth)shown=shown.dropLast(1)
+    shown+="…"
+   }
+   canvas.drawText(shown,x,y,paint)
+  }
+  fun fillRect(left:Float,top:Float,right:Float,bottom:Float,color:Int){
+   paint.color=color;paint.style=Paint.Style.FILL
+   canvas.drawRect(left,top,right,bottom,paint)
+  }
+  fun rule(y:Float){fillRect(margin,y,width-margin,y+0.7f,Color.LTGRAY)}
+  fun drawHeader():Float{
+   val top=if(ticket)11f else 16f
+   if(!ticket){
+    try{
+     assets.open("belsiperu_logo.png").use{
+      val bitmap=BitmapFactory.decodeStream(it)
+      if(bitmap!=null){
+       drawProductImage(canvas,bitmap,RectF(margin,top,margin+73f,top+57f))
+       bitmap.recycle()
+      }
+     }
+    }catch(_:Exception){}
+   }
+   val titleX=if(ticket)margin else margin+83f
+   text("BELSIPERU S.A.C.",titleX,top+17f,if(ticket)13f else 17f,true,labelColor)
+   text("RUC 20605060634",titleX,top+34f,if(ticket)9f else 10f)
+   text("PROFORMA 0002-"+id.toString().padStart(7,'0'),titleX,top+50f,if(ticket)9f else 11f,true)
+   rule(top+65f)
+   fitted("CLIENTE: "+client,margin,top+82f,contentWidth,if(ticket)8f else 9f,true)
+   text("DOC.: "+(if(document.isBlank())"—" else document),margin,top+98f,8.5f)
+   fitted("DIRECCIÓN: "+address.ifBlank{"No registrada"},margin,top+113f,contentWidth,8f)
+   val date=created.take(10)
+   text("EMISIÓN: "+date,margin,top+128f,8f)
+   if(pdfExpiry.isNotBlank())right("VENCE: "+pdfExpiry,width-margin,top+128f,8f)
+   text("MONEDA: "+currency,margin,top+143f,8f)
+   rule(top+151f)
+   val labelsY=top+168f
+   if(ticket){
+    text("ARTÍCULOS / SERVICIOS",margin,labelsY,9f,true,labelColor)
+   }else{
+    text("CANT.",margin,labelsY,8f,true,labelColor)
+    text("PRODUCTO / SERVICIO",margin+contentWidth*0.13f,labelsY,8f,true,labelColor)
+    right("P. UNIT.",margin+contentWidth*0.80f,labelsY,8f,true,labelColor)
+    right("IMPORTE",width-margin,labelsY,8f,true,labelColor)
+   }
+   rule(labelsY+6f)
+   return labelsY+17f
+  }
+  fun drawPhoto(uriText:String?,box:RectF){
+   if(uriText.isNullOrBlank())return
+   try{
+    val uri=Uri.parse(uriText)
+    if(uri.scheme!="content")return
+    val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+    contentResolver.openInputStream(uri)?.use{BitmapFactory.decodeStream(it,null,bounds)}
+    if(bounds.outWidth<=0||bounds.outHeight<=0)return
+    var sample=1
+    while(bounds.outWidth/sample>260||bounds.outHeight/sample>260)sample*=2
+    val bitmap=contentResolver.openInputStream(uri)?.use{
+     BitmapFactory.decodeStream(it,null,BitmapFactory.Options().apply{inSampleSize=sample})
+    }
+    if(bitmap!=null){drawProductImage(canvas,bitmap,box);bitmap.recycle()}
+   }catch(_:Exception){}catch(_:OutOfMemoryError){}
+  }
+  fun rowHeight(item:PdfQuoteLine):Float=if(ticket){
+   if(item.includePhoto&&!item.photoUri.isNullOrBlank())108f else 56f
+  }else{
+   if(item.includePhoto&&!item.photoUri.isNullOrBlank())76f else 45f
+  }
+  var y=drawHeader()
+  fun endPage(next:Boolean){
+   text("Proforma comercial. No constituye comprobante tributario.",margin,height-18f,
+    if(ticket)7f else 8f,false,labelColor)
+   if(!ticket)right("Página "+number,width-margin,height-18f,8f,false,labelColor)
+   pdf.finishPage(page)
+   if(next){
+    number++
+    page=pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(
+     paper.first,paper.second,number).create())
+    canvas=page.canvas
+    y=drawHeader()
+   }
+  }
+  try{
+   items.forEachIndexed{index,item->
+    val rowH=rowHeight(item)
+    if(!ticket&&y+rowH+115f>height){
+     endPage(true)
+    }
+    val top=y
+    if(ticket){
+     fitted((index+1).toString()+". "+item.name,margin,y+10f,contentWidth,9f,true)
+     fitted(item.code+" · "+item.unit,margin,y+24f,contentWidth,8f)
+     text("Cantidad: "+item.qty,margin,y+39f,8f)
+     right(currencyMark+" "+fmt(item.lineTotal),width-margin,y+39f,9f,true)
+     if(item.includePhoto){
+      drawPhoto(item.photoUri,RectF(margin+contentWidth-67f,top+42f,
+       width-margin,top+103f))
+     }
+    }else{
+     val descX=margin+contentWidth*0.13f
+     val descWidth=contentWidth*0.49f
+     text(item.qty.toString(),margin,y+12f,8.5f)
+     fitted(item.name,descX,y+11f,descWidth,9f,true)
+     fitted(item.code+" · "+item.unit,descX,y+24f,descWidth,7.5f)
+     if(item.discount>0.001 || item.pct>0.001)
+      fitted("Descuento: "+fmt(item.pct)+"% + "+fmt(item.discount),
+       descX,y+35f,descWidth,7.5f)
+     right(currencyMark+" "+fmt(item.price),margin+contentWidth*0.80f,y+12f,8.5f)
+     right(currencyMark+" "+fmt(item.lineTotal),width-margin,y+12f,9f,true)
+     if(item.includePhoto){
+      drawPhoto(item.photoUri,RectF(descX,y+38f,descX+49f,y+rowH-5f))
+     }
+    }
+    y+=rowH
+    rule(y)
+    y+=5f
+   }
+   if(!ticket&&y+112f>height)endPage(true)
+   y+=16f
+   val subtotal=items.sumOf{if(it.taxable)it.lineTotal/1.18 else it.lineTotal}
+   val tax=(total-subtotal).coerceAtLeast(0.0)
+   right("SUBTOTAL: "+currencyMark+" "+fmt(subtotal),width-margin,y,10f,true)
+   y+=19f
+   right("IGV: "+currencyMark+" "+fmt(tax),width-margin,y,10f)
+   y+=22f
+   right("TOTAL: "+currencyMark+" "+fmt(total),width-margin,y,if(ticket)13f else 15f,true,labelColor)
+   y+=20f
+   fitted("CONDICIÓN DE PAGO: "+pdfPayment,margin,y,contentWidth,8f)
+   y+=14f
+   fitted("RESPONSABLE: "+pdfSeller,margin,y,contentWidth,8f)
+   endPage(false)
+   pdf.writeTo(out)
+  }finally{pdf.close()}
+ }
+
  private fun writePdfProformaAdaptada(id:Long,out:java.io.OutputStream){
   val cur=db.readableDatabase.rawQuery(
     "SELECT client,product,qty,unit_price,discount,igv,currency,total,created,discount_amount,tax_affectation FROM quotes WHERE id=?",
@@ -2607,6 +2815,11 @@ class MainActivity:Activity() {
  }
 
  private fun writePdf(id:Long,out:java.io.OutputStream){
+  val count=db.readableDatabase.rawQuery("SELECT COUNT(*) FROM quote_items WHERE quote_id=?",
+   arrayOf(id.toString()))
+  val multi=try{count.moveToFirst()&&count.getInt(0)>1}finally{count.close()}
+  if(multi){writePdfMultiple(id,out);return}
+
   if(pdfStyle=="Proforma BELSIPERU"){writePdfProforma(id,out);return}
   val c=db.readableDatabase.rawQuery("SELECT client,product,qty,unit_price,discount,igv,currency,total,created,product_photo,discount_amount FROM quotes WHERE id=?",arrayOf(id.toString()))
   if(!c.moveToFirst()){c.close();return}
