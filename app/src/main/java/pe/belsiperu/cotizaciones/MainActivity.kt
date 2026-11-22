@@ -7,6 +7,7 @@ import android.content.*
 import android.database.sqlite.*
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
+import androidx.core.content.FileProvider
 import android.graphics.Typeface
 import android.view.Gravity
 import android.net.Uri
@@ -2497,7 +2498,7 @@ class MainActivity:Activity() {
       setMargins(d(3),d(3),d(3),d(3))
      })
     }
-    actionButton("Exportar PDF",navy,
+    actionButton("Gestionar PDF",navy,
      "Exportar PDF de la cotización "+quoteId){pdfOptions(quoteId)}
     if(status=="PENDIENTE"){
      actionButton("Confirmar venta",green,
@@ -2690,9 +2691,160 @@ class MainActivity:Activity() {
    pdfExpiry=dateText
    pdfSeller=seller.text.toString().trim().ifEmpty{"BELSIPERU"}
    pdfPayment=payment.text.toString().trim().ifEmpty{"CONTADO"}
-   exportPdf(id)
+   documentActions(id)
   }
  }
+
+ // PDF temporal para acciones: no obliga a guardar antes de visualizar o compartir.
+ private fun preparedProforma(id:Long):java.io.File{
+  val dir=java.io.File(cacheDir,"shared_proformas")
+  if(!dir.isDirectory&&!dir.mkdirs())throw java.io.IOException("No se pudo crear la carpeta temporal")
+  val style=pdfStyle.replace(Regex("[^A-Za-z0-9]"),"_")
+  val paper=pdfPaper.replace(Regex("[^A-Za-z0-9]"),"_")
+  val file=java.io.File(dir,"BELSIPERU_0002-"+id.toString().padStart(7,'0')+
+   "_"+style+"_"+paper+".pdf")
+  try{
+   file.outputStream().use{writePdf(id,it)}
+   if(file.length()<100L)throw java.io.IOException("El documento generado está vacío")
+   return file
+  }catch(e:Exception){file.delete();throw e}
+ }
+ private fun sharedPdfUri(file:java.io.File):Uri=
+  FileProvider.getUriForFile(this,packageName+".fileprovider",file)
+
+ private fun previewQuotePdf(file:java.io.File){
+  val uri=sharedPdfUri(file)
+  val view=Intent(Intent.ACTION_VIEW).apply{
+   setDataAndType(uri,"application/pdf")
+   addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+   clipData=ClipData.newRawUri("Proforma BELSIPERU",uri)
+  }
+  try{startActivity(Intent.createChooser(view,"Visualizar proforma"))}
+  catch(e:Exception){toast("No hay visor PDF disponible: "+(e.message?:""))}
+ }
+ private fun quoteRecipientEmail(id:Long):String{
+  val q=db.readableDatabase.rawQuery(
+   "SELECT c.email FROM quotes q LEFT JOIN clients c ON c.id=q.client_id WHERE q.id=?",
+   arrayOf(id.toString()))
+  try{return if(q.moveToFirst())q.getString(0)?:"" else ""}finally{q.close()}
+ }
+ private fun shareQuotePdf(id:Long,file:java.io.File,email:Boolean){
+  val uri=sharedPdfUri(file)
+  val number="0002-"+id.toString().padStart(7,'0')
+  val intent=Intent(Intent.ACTION_SEND).apply{
+   type=if(email)"message/rfc822" else "application/pdf"
+   putExtra(Intent.EXTRA_STREAM,uri)
+   putExtra(Intent.EXTRA_SUBJECT,"Proforma BELSIPERU "+number)
+   putExtra(Intent.EXTRA_TEXT,"Adjunto la proforma "+number+" de BELSIPERU S.A.C.")
+   if(email){
+    val recipient=quoteRecipientEmail(id)
+    if(recipient.isNotBlank())putExtra(Intent.EXTRA_EMAIL,arrayOf(recipient))
+   }
+   clipData=ClipData.newRawUri("Proforma BELSIPERU",uri)
+   addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+  }
+  try{startActivity(Intent.createChooser(intent,
+   if(email)"Enviar proforma por correo" else "Compartir PDF por WhatsApp / Otros"))}
+  catch(e:Exception){toast("No se pudo compartir: "+(e.message?:""))}
+ }
+ private fun printQuotePdf(file:java.io.File){
+  val manager=getSystemService(Context.PRINT_SERVICE) as android.print.PrintManager
+  val adapter=object:android.print.PrintDocumentAdapter(){
+   override fun onLayout(oldAttributes:android.print.PrintAttributes?,
+    newAttributes:android.print.PrintAttributes?,
+    cancellationSignal:android.os.CancellationSignal,
+    callback:LayoutResultCallback,extras:Bundle?){
+    if(cancellationSignal.isCanceled){callback.onLayoutCancelled();return}
+    callback.onLayoutFinished(android.print.PrintDocumentInfo.Builder(file.name)
+     .setContentType(android.print.PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+     .setPageCount(android.print.PrintDocumentInfo.PAGE_COUNT_UNKNOWN).build(),true)
+   }
+   override fun onWrite(pages:Array<out android.print.PageRange>,
+    destination:android.os.ParcelFileDescriptor,
+    cancellationSignal:android.os.CancellationSignal,callback:WriteResultCallback){
+    if(cancellationSignal.isCanceled){callback.onWriteCancelled();return}
+    try{
+     file.inputStream().use{input->
+      java.io.FileOutputStream(destination.fileDescriptor).use{output->
+       val buffer=ByteArray(16*1024)
+       while(true){
+        if(cancellationSignal.isCanceled){callback.onWriteCancelled();return}
+        val n=input.read(buffer);if(n<0)break
+        output.write(buffer,0,n)
+       }
+       output.flush()
+      }
+     }
+     callback.onWriteFinished(arrayOf(android.print.PageRange.ALL_PAGES))
+    }catch(e:Exception){callback.onWriteFailed(e.message?:"No se pudo imprimir")}
+   }
+  }
+  val media=when(pdfPaper){
+   "A4 vertical","A4 horizontal"->android.print.PrintAttributes.MediaSize.ISO_A4
+   "A5 vertical","A5 horizontal"->android.print.PrintAttributes.MediaSize.ISO_A5
+   else->android.print.PrintAttributes.MediaSize.NA_LETTER
+  }
+  val oriented=if(pdfPaper.endsWith("horizontal"))media.asLandscape() else media.asPortrait()
+  val attrs=android.print.PrintAttributes.Builder().setMediaSize(oriented).build()
+  try{manager.print("Proforma BELSIPERU "+file.name,adapter,attrs)}
+  catch(e:Exception){toast("Error al abrir impresión: "+(e.message?:""))}
+ }
+ private fun documentActions(id:Long){
+  val file=try{preparedProforma(id)}
+   catch(e:Exception){toast("Error al generar PDF: "+(e.message?:""));return}
+  val q=db.readableDatabase.rawQuery(
+   "SELECT client,total,currency,status,created FROM quotes WHERE id=?",
+   arrayOf(id.toString()))
+  var client="";var total=0.0;var currency="PEN";var status="";var created=""
+  try{
+   if(!q.moveToFirst()){toast("Proforma no encontrada");return}
+   client=q.getString(0)?:"";total=q.getDouble(1)
+   currency=q.getString(2)?:"PEN";status=q.getString(3)?:""
+   created=q.getString(4)?:""
+  }finally{q.close()}
+  screen("Documento interno")
+  button("← Opciones PDF"){pdfOptions(id)}
+  val summary=card()
+  summary.addView(line("PROFORMA",19f,navy,true).apply{gravity=Gravity.CENTER})
+  summary.addView(line("0002-"+id.toString().padStart(7,'0'),18f,muted).apply{gravity=Gravity.CENTER})
+  summary.addView(line((if(currency=="USD")"US$ " else "S/ ")+
+   pdfNumber(total),24f,ink,true).apply{gravity=Gravity.CENTER})
+  summary.addView(line("Cliente",14f,navy,true))
+  summary.addView(line(client,15f,ink))
+  summary.addView(line("Fecha: "+created.take(10)+" · "+status,12f,muted))
+  summary.addView(line("Diseño: "+pdfStyle+" · Papel: "+pdfPaper,12f,muted))
+  body.addView(summary)
+  fun action(symbol:String,title:String,subtitle:String,onClick:()->Unit){
+   val row=LinearLayout(this).apply{
+    orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL
+    setPadding(d(16),d(15),d(15),d(15))
+    background=round(Color.WHITE,18,border)
+    elevation=d(2).toFloat()
+    isClickable=true;isFocusable=true;contentDescription=title
+    setOnClickListener{onClick()}
+   }
+   row.addView(line(symbol,22f,Color.rgb(54,83,168),true),
+    LinearLayout.LayoutParams(d(42),-2))
+   val labels=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+   labels.addView(line(title,16f,ink,true))
+   labels.addView(line(subtitle,11.5f,muted))
+   row.addView(labels,LinearLayout.LayoutParams(0,-2,1f))
+   row.addView(line("›",24f,muted))
+   body.addView(row,LinearLayout.LayoutParams(-1,-2).apply{
+    setMargins(0,d(6),0,d(6))
+   })
+  }
+  if(status=="PENDIENTE")
+   action("✎","Editar proforma","Cambiar cliente, productos, cantidades, precios y descuentos"){
+    newQuote(editQuoteId=id)
+   }
+  action("✉","Enviar por email","Adjuntar automáticamente el PDF"){shareQuotePdf(id,file,true)}
+  action("➤","Enviar por WhatsApp / Otros","Compartir con tus aplicaciones"){shareQuotePdf(id,file,false)}
+  action("◉","Visualizar PDF","Abrir el documento completo"){previewQuotePdf(file)}
+  action("▣","Imprimir","Impresión de Android con formato elegido"){printQuotePdf(file)}
+  action("↓","Guardar PDF","Seleccionar carpeta o proveedor de archivos"){exportPdf(id)}
+ }
+
  private fun exportPdf(id:Long){
   pendingPdf=id
   val intent=Intent(Intent.ACTION_CREATE_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="application/pdf";putExtra(Intent.EXTRA_TITLE,if(pdfStyle=="Proforma BELSIPERU")"BELSIPERU_PROFORMA_0002-${id.toString().padStart(7,'0')}_${when(pdfPaper){"A4 vertical"->"A4V";"A4 horizontal"->"A4H";"A5 vertical"->"A5V";"A5 horizontal"->"A5H";"Ticket 80 mm"->"TICKET80";else->"CARTA"}}.pdf" else "BELSIPERU_COT-${id.toString().padStart(6,'0')}.pdf")}
