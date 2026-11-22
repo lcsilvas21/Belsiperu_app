@@ -1901,6 +1901,9 @@ class MainActivity:Activity() {
        applyIgv.isChecked,photo.isChecked))
       refreshPicked()
       dialog.dismiss()
+      // Después de seleccionar un producto, cerrar la lista para evitar
+      // mostrar todos los artículos mientras no se realiza otra búsqueda.
+      productSearch.setText("")
       toast("Producto añadido a la cotización")
      }
     }
@@ -1910,7 +1913,16 @@ class MainActivity:Activity() {
   fun renderProducts(){
    resultsList.removeAllViews()
    val query=productSearch.text.toString().trim()
-   val filtered=if(query.isBlank())catalog else catalog.filter{
+   // No ofrecer el catálogo completo al abrir la pantalla.
+   if(query.isBlank()){
+    resultsList.addView(line(
+     if(catalog.isEmpty())
+      "No hay productos registrados en esta instalación. Abre Productos para añadirlos."
+     else "Escribe parte del nombre o código de un producto para ver coincidencias.",
+     13f,muted))
+    return
+   }
+   val filtered=catalog.filter{
     listOf(it.name,it.code,it.barcode,it.brand,it.category)
      .any{field->field.contains(query,ignoreCase=true)}
    }
@@ -1968,7 +1980,7 @@ class MainActivity:Activity() {
    if(catalog.isEmpty())
     "Catálogo vacío en esta instalación. Los productos registrados en otras APK de prueba no se transfieren automáticamente."
    else
-    "Catálogo disponible: "+catalog.size+" artículo(s). Toca «＋ Agregar producto» en los resultados.",
+    "Catálogo disponible: "+catalog.size+" artículo(s). Escribe un nombre o código para buscarlos.",
    13f,if(catalog.isEmpty())Color.rgb(162,84,30) else muted))
   if(catalog.isEmpty()){
    button("＋ Registrar productos en esta instalación"){products()}
