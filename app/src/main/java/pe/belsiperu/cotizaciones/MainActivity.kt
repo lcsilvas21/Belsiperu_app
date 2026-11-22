@@ -519,28 +519,100 @@ class MainActivity:Activity() {
   }
  }
 
+
  private fun products(){
-  screen("Productos");button("← Inicio"){home()}
-  val code=input("Código");val name=input("Descripción");val price=input("Precio base",true)
-  val currency=choice(listOf("PEN","USD"));val stock=input("Stock inicial",true);val min=input("Stock mínimo",true)
-  button("Guardar producto"){
-   if(name.text.isBlank())toast("Indica el producto") else {
-    val values=android.content.ContentValues().apply{
-     put("code",code.text.toString());put("name",name.text.toString());put("price",price.text.toString().toDoubleOrNull()?:0.0)
-     put("currency",currency.selectedItem.toString());put("stock",stock.text.toString().toIntOrNull()?:0);put("min_stock",min.text.toString().toIntOrNull()?:0)
+  screen("Catálogo")
+  button("＋ Nuevo producto"){productEditor()}
+  heading("Productos y servicios","Busca, consulta fotos y edita las fichas guardadas.")
+  label("Buscar en catálogo")
+  val search=input("Nombre, código, marca, categoría o código de barras")
+  label("Mostrar")
+  val filter=choice(listOf("Todos","Productos","Servicios"))
+  val list=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+  body.addView(list,LinearLayout.LayoutParams(-1,-2))
+  fun refresh(){
+   list.removeAllViews()
+   val text=search.text.toString().trim()
+   val chosen=filter.selectedItemPosition
+   val c=db.readableDatabase.rawQuery(
+    "SELECT id,code,name,price,currency,stock,min_stock,photo_uri,kind,category,brand,unit,barcode,purchase_price FROM products ORDER BY id DESC",null)
+   var found=0
+   try{
+    while(c.moveToNext()){
+     val id=c.getLong(0)
+     val code=c.getString(1)?:""
+     val name=c.getString(2)?:""
+     val price=c.getDouble(3)
+     val currency=c.getString(4)?:"PEN"
+     val currentStock=c.getInt(5)
+     val min=c.getInt(6)
+     val photo=c.getString(7)
+     val kind=c.getString(8)?:"PRODUCTO"
+     val category=c.getString(9)?:""
+     val brand=c.getString(10)?:""
+     val unit=c.getString(11)?:"UNIDADES"
+     val barcode=c.getString(12)?:""
+     val purchase=c.getDouble(13)
+     if(chosen==1&&kind=="SERVICIO")continue
+     if(chosen==2&&kind!="SERVICIO")continue
+     val searchable=listOf(code,name,category,brand,barcode).joinToString(" ")
+     if(text.isNotEmpty()&&!searchable.contains(text,ignoreCase=true))continue
+     found++
+     val entry=card()
+     val row=LinearLayout(this@MainActivity).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL}
+     val preview=ImageView(this@MainActivity).apply{
+      background=round(pale,10,border)
+      setPadding(d(4),d(4),d(4),d(4))
+      contentDescription="Fotografía: "+name
+     }
+     showProductImage(preview,photo)
+     row.addView(preview,LinearLayout.LayoutParams(d(78),d(80)))
+     val details=LinearLayout(this@MainActivity).apply{
+      orientation=LinearLayout.VERTICAL;setPadding(d(11),0,0,0)
+     }
+     details.addView(line(name,15f,navy,true))
+     details.addView(line(code+" · "+(if(kind=="SERVICIO")"Servicio" else "Producto"),12f,muted))
+     if(category.isNotBlank()||brand.isNotBlank()){
+      details.addView(line(listOf(category,brand).filter{it.isNotBlank()}.joinToString(" · "),12f,muted))
+     }
+     details.addView(line((if(currency=="USD")"US$ " else "S/ ")+
+       String.format(Locale.US,"%,.2f",price),17f,green,true))
+     details.addView(line(if(kind=="SERVICIO")"Servicio — sin stock físico" else
+       ("Stock: "+currentStock+" "+unit.lowercase(Locale.ROOT)+
+        if(currentStock<=min)" · Bajo mínimo" else ""),12f,muted))
+     row.addView(details,LinearLayout.LayoutParams(0,-2,1f))
+     entry.addView(row)
+     val actions=LinearLayout(this@MainActivity).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.END}
+     fun action(title:String,click:()->Unit){
+      val link=line(title,13f,green,true).apply{
+       setPadding(d(12),d(11),d(12),d(11))
+       isClickable=true;isFocusable=true;setOnClickListener{click()}
+      }
+      actions.addView(link)
+     }
+     action("Editar"){productEditor(id)}
+     action(if(photo.isNullOrBlank())"Añadir foto" else "Cambiar foto"){selectPhoto(id)}
+     entry.addView(actions)
+     list.addView(entry,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(8),0,d(6))})
     }
-    db.writableDatabase.insert("products",null,values);products()
+   }finally{c.close()}
+   if(found==0){
+    list.addView(line("No hay productos que coincidan con la búsqueda.",14f,muted))
+   }else{
+    list.addView(line(found.toString()+" registro(s) en el catálogo.",12f,muted))
    }
   }
-  val c=db.readableDatabase.rawQuery("SELECT id,code,name,price,currency,stock,min_stock,photo_uri FROM products ORDER BY id DESC",null)
-  while(c.moveToNext()){
-   val id=c.getLong(0)
-   label("${c.getString(1)} • ${c.getString(2)}\n${c.getString(4)} ${c.getDouble(3)}  |  Stock ${c.getInt(5)}  |  Mín. ${c.getInt(6)}")
-   button(if(c.isNull(7)) "Añadir fotografía" else "Cambiar fotografía"){selectPhoto(id)}
+  search.addTextChangedListener(object:TextWatcher{
+   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){refresh()}
+   override fun afterTextChanged(s:Editable?){}
+  })
+  filter.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
+   override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
+   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){refresh()}
   }
-  c.close()
+  refresh()
  }
-
  private fun productEditor(editId:Long?=null){
   val saved=mutableMapOf<String,String>()
   if(editId!=null){
