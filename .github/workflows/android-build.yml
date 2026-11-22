@@ -48,7 +48,15 @@ jobs:
         with:
           gradle-version: '8.10.2'
       - name: Compilar APK
-        run: gradle assembleDebug --stacktrace
+        run: |
+          for intento in 1 2 3; do
+            echo "Intento de compilación $intento (descargas limitadas)"
+            if gradle assembleDebug --stacktrace --max-workers=2 --no-parallel; then
+              exit 0
+            fi
+            if [ "$intento" -lt 3 ]; then sleep 20; fi
+          done
+          exit 1
       - name: Guardar APK
         uses: actions/upload-artifact@v4
         with:
