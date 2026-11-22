@@ -609,7 +609,7 @@ class MainActivity:Activity() {
 
  private fun pdfOptions(id:Long){
   screen("Opciones PDF");button("← Cotizaciones"){quotes()}
-  info("Modelo de proforma BELSIPERU","Por defecto se usa el diseño del PDF de referencia: logotipo, tabla negra, totales y datos bancarios.")
+  info("Modelo de proforma BELSIPERU","Se conserva el diseño aprobado. Si el producto tiene una fotografía accesible, aparecerá en el PDF.")
   label("Diseño")
   val style=choice(listOf("Proforma BELSIPERU","Moderno","Corporativo","Prémium"))
   label("Tamaño de papel")
@@ -1280,22 +1280,22 @@ class MainActivity:Activity() {
   canvas.drawText("Precio unitario: ${c.getString(6)} ${"%.2f".format(Locale.US,c.getDouble(3))}",margin+8f,productY+44f,p)
   canvas.drawText("Descuento: ${c.getDouble(4)} % + ${"%.2f".format(Locale.US,c.getDouble(10))}",margin+8f,productY+65f,p)
   canvas.drawText("IGV: ${if(c.getInt(5)==1)"18 %" else "No aplicado"}",margin+8f,productY+86f,p)
-  val photo=c.getString(9)
-  if(!photo.isNullOrBlank() && !compact) {
-   try{
-    contentResolver.openInputStream(Uri.parse(photo))?.use{stream->
-     val bitmap=BitmapFactory.decodeStream(stream)
-     if(bitmap!=null){
-      val maxSide=if(w<500)85f else 130f
-      val ratio=minOf(maxSide/bitmap.width,maxSide/bitmap.height)
-      val bw=bitmap.width*ratio;val bh=bitmap.height*ratio
-      val rect=RectF(w-margin-bw,productY+8f,w-margin,productY+8f+bh)
-      canvas.drawBitmap(bitmap,null,rect,Paint(3));bitmap.recycle()
-     }
-    }
-   }catch(_:Exception){}
-  }
   val totalY=minOf(h-82f,productY+145f)
+  val productPicture=loadQuoteProductBitmap(id)
+  if(productPicture!=null){
+   val box=if(compact){
+    // En ticket de los estilos anteriores, bajo el total, sin cubrir cifras.
+    RectF(w-margin-78f,totalY+16f,w-margin,totalY+95f)
+   }else{
+    val side=if(w<500)85f else 120f
+    RectF(w-margin-side,productY+8f,w-margin,
+      minOf(totalY-10f,productY+8f+side))
+   }
+   if(box.width()>20f && box.height()>20f){
+    drawProductImage(canvas,productPicture,box)
+   }
+   productPicture.recycle()
+  }
   p.color=main;p.textSize=if(compact)14f else 20f;p.isFakeBoldText=true
   canvas.drawText("TOTAL ${c.getString(6)} ${"%.2f".format(Locale.US,c.getDouble(7))}",margin,totalY,p)
   p.isFakeBoldText=false;p.textSize=if(compact)8f else 10f
