@@ -16,6 +16,7 @@ on:
       - fix/busqueda-productos-bajo-demanda-v1-12
       - feat/botones-calendario-v1-13
       - feat/configuracion-empresa-impresion-v1-14
+      - fix/pie-pdf-centrado-v1-15
   pull_request:
     branches:
       - main
