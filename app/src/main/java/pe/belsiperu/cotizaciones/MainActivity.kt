@@ -1347,7 +1347,7 @@ class MainActivity:Activity() {
   val driver=Switch(this).apply{text="¿Es un conductor?";isChecked=previous("is_driver")=="1"}
   val carrier=Switch(this).apply{text="¿Es una empresa de transporte?";isChecked=previous("is_carrier")=="1"}
   for(opt in listOf(supplier,driver,carrier)){
-   opt.textSize=15f;setTextColor(ink)
+   opt.textSize=15f;opt.setTextColor(ink)
    opt.setPadding(d(9),d(9),d(9),d(9))
    body.addView(opt,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(2),0,d(2))})
   }
