@@ -418,7 +418,7 @@ class MainActivity:Activity() {
  }
  private fun exportPdf(id:Long){
   pendingPdf=id
-  val intent=Intent(Intent.ACTION_CREATE_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="application/pdf";putExtra(Intent.EXTRA_TITLE,if(pdfStyle=="Proforma BELSIPERU")"BELSIPERU_PROFORMA_0002-${id.toString().padStart(7,'0')}.pdf" else "BELSIPERU_COT-${id.toString().padStart(6,'0')}.pdf")}
+  val intent=Intent(Intent.ACTION_CREATE_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="application/pdf";putExtra(Intent.EXTRA_TITLE,if(pdfStyle=="Proforma BELSIPERU")"BELSIPERU_PROFORMA_0002-${id.toString().padStart(7,'0')}_${when(pdfPaper){"A4 vertical"->"A4V";"A4 horizontal"->"A4H";"A5 vertical"->"A5V";"A5 horizontal"->"A5H";"Ticket 80 mm"->"TICKET80";else->"CARTA"}}.pdf" else "BELSIPERU_COT-${id.toString().padStart(6,'0')}.pdf")}
   startActivityForResult(intent,91)
  }
  @Deprecated("Legacy activity result used for minimal SDK example")
@@ -443,6 +443,10 @@ class MainActivity:Activity() {
  // Diseño de proforma comercial basado en el PDF de referencia del usuario.
  // Papel carta: 612x792 puntos (el documento proporcionado tiene este tamaño).
  private fun writePdfProforma(id:Long,out:java.io.OutputStream){
+  if(pdfPaper=="A4 horizontal" || pdfPaper=="A5 horizontal" || pdfPaper=="Ticket 80 mm") {
+   writePdfProformaAdaptada(id,out)
+   return
+  }
   val c=db.readableDatabase.rawQuery(
    "SELECT client,product,qty,unit_price,discount,igv,currency,total,created,product_photo,discount_amount FROM quotes WHERE id=?",
    arrayOf(id.toString()))
@@ -485,13 +489,22 @@ class MainActivity:Activity() {
    val nameCurrency=if(currency=="USD")"DÓLARES" else "SOLES"
    fun amount(n:Double)=String.format(Locale.US,"%,.2f",n)
    val pdf=android.graphics.pdf.PdfDocument()
-   val page=pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(612,792,1).create())
+   // La carta conserva exactamente el diseño aprobado. A4 y A5 vertical
+   // imprimen la misma maqueta con dimensiones físicas reales y escala uniforme.
+   val pageSize=when(pdfPaper){
+    "A4 vertical"->Pair(595,842)
+    "A5 vertical"->Pair(420,595)
+    else->Pair(612,792)
+   }
+   val page=pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(pageSize.first,pageSize.second,1).create())
    val canvas=page.canvas
-   // Centrado horizontal de la proforma sobre papel de 612 puntos.
-   // La tabla ocupa 15.05..544.62 en el diseño original: el desplazamiento
-   // deja ~41.2 puntos de margen a ambos lados de la página.
+   val scale=minOf(pageSize.first/612f,pageSize.second/792f)
+   val padX=(pageSize.first-612f*scale)/2f
+   val padY=(pageSize.second-792f*scale)/2f
    val horizontalOffset=(612f-(15.05f+544.62f))/2f
    canvas.save()
+   canvas.translate(padX,padY)
+   canvas.scale(scale,scale)
    canvas.translate(horizontalOffset,0f)
    val p=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=Color.BLACK;typeface=Typeface.DEFAULT}
    fun font(size:Float,bold:Boolean=false,color:Int=Color.BLACK){
