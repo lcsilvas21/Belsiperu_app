@@ -6,6 +6,9 @@ import android.os.*
 import android.content.*
 import android.database.sqlite.*
 import android.graphics.*
+import android.graphics.drawable.GradientDrawable
+import android.graphics.Typeface
+import android.view.Gravity
 import android.net.Uri
 import android.text.InputType
 import android.view.*
@@ -32,30 +35,147 @@ class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,2) {
 class MainActivity:Activity() {
  private lateinit var db:Store
  private lateinit var body:LinearLayout
- private val navy=Color.rgb(18,52,90)
- private val green=Color.rgb(20,138,104)
- private val gold=Color.rgb(213,165,74)
+ private val navy=Color.rgb(13,43,91)
+ private val green=Color.rgb(14,122,77)
+ private val gold=Color.rgb(212,175,55)
+ private val pale=Color.rgb(246,249,247)
+ private val ink=Color.rgb(27,46,60)
+ private val muted=Color.rgb(103,119,130)
+ private val border=Color.rgb(225,233,235)
  private var pendingPdf:Long?=null
  private var pendingPhotoProduct:Long?=null
  private var pdfPaper="A4 vertical"
  private var pdfStyle="Moderno"
  private fun today()=SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.getDefault()).format(Date())
- override fun onCreate(savedInstanceState:Bundle?) { super.onCreate(savedInstanceState);db=Store(this); lock() }
+
+ private fun d(v:Int)=(v*resources.displayMetrics.density+0.5f).toInt()
+ private fun round(c:Int,r:Int=16,edge:Int?=null)=GradientDrawable().apply{
+  shape=GradientDrawable.RECTANGLE
+  setColor(c)
+  cornerRadius=d(r).toFloat()
+  if(edge!=null)setStroke(d(1),edge)
+ }
+ private fun line(t:String,size:Float=15f,color:Int=ink,bold:Boolean=false)=TextView(this).apply{
+  text=t; textSize=size; setTextColor(color)
+  typeface=Typeface.create("sans-serif",if(bold)Typeface.BOLD else Typeface.NORMAL)
+  setLineSpacing(d(2).toFloat(),1.02f)
+ }
+ private fun logo()=ImageView(this).apply{
+  try{assets.open("belsiperu_logo.png").use{setImageBitmap(BitmapFactory.decodeStream(it))}}catch(_:Exception){}
+  scaleType=ImageView.ScaleType.FIT_CENTER
+  background=round(Color.WHITE,11)
+  setPadding(d(6),d(5),d(6),d(5))
+  contentDescription="BELSIPERU"
+ }
+ private fun card()=LinearLayout(this).apply{
+  orientation=LinearLayout.VERTICAL;setPadding(d(15),d(15),d(15),d(15))
+  background=round(Color.WHITE,16,border)
+  elevation=d(2).toFloat()
+ }
+ private fun heading(title:String,detail:String=""){
+  body.addView(line(title,18f,navy,true),LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(17),0,d(5))})
+  if(detail.isNotEmpty())body.addView(line(detail,12f,muted))
+ }
+ private fun info(title:String,detail:String,highlight:Int=green){
+  val c=card()
+  c.addView(line(title,15f,highlight,true))
+  c.addView(line(detail,13f,muted))
+  body.addView(c,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(7),0,d(5))})
+ }
+ private fun tile(label:String,sub:String,icon:Int,action:()->Unit)=LinearLayout(this).apply{
+  orientation=LinearLayout.VERTICAL
+  gravity=Gravity.CENTER
+  setPadding(d(9),d(15),d(9),d(12))
+  background=round(Color.WHITE,17,border)
+  elevation=d(2).toFloat()
+  isClickable=true;isFocusable=true;setOnClickListener{action()}
+  addView(ImageView(this@MainActivity).apply{setImageResource(icon);setColorFilter(green)},
+    LinearLayout.LayoutParams(d(32),d(32)))
+  addView(line(label,15f,navy,true).apply{gravity=Gravity.CENTER},LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(10),0,0)})
+  addView(line(sub,11f,muted).apply{gravity=Gravity.CENTER})
+ }
+ private fun tileRow(a:LinearLayout,b:LinearLayout){
+  val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
+  row.addView(a,LinearLayout.LayoutParams(0,-2,1f).apply{setMargins(0,d(5),d(5),d(8))})
+  row.addView(b,LinearLayout.LayoutParams(0,-2,1f).apply{setMargins(d(5),d(5),0,d(8))})
+  body.addView(row)
+ }
+ private fun navItem(parent:LinearLayout,name:String,icon:Int,selected:Boolean,action:()->Unit){
+  val col=LinearLayout(this).apply{
+   orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER
+   isClickable=true;isFocusable=true;setOnClickListener{action()}
+   contentDescription=name
+  }
+  col.addView(ImageView(this).apply{setImageResource(icon);setColorFilter(if(selected)green else muted)},LinearLayout.LayoutParams(d(22),d(22)))
+  col.addView(line(name,10f,if(selected)green else muted,selected).apply{gravity=Gravity.CENTER;setSingleLine(true)})
+  parent.addView(col,LinearLayout.LayoutParams(0,-1,1f))
+ }
+ private fun queryCount(sql:String):Int{
+  val cur=db.readableDatabase.rawQuery(sql,null)
+  val n=if(cur.moveToFirst())cur.getInt(0) else 0
+  cur.close();return n
+ }
+
+ override fun onCreate(savedInstanceState:Bundle?) { super.onCreate(savedInstanceState);window.statusBarColor=navy;db=Store(this); lock() }
+
  private fun screen(title:String) {
-  val outer=LinearLayout(this).apply {orientation=LinearLayout.VERTICAL;setBackgroundColor(Color.rgb(243,246,249))}
-  val head=TextView(this).apply {text="BELSIPERU  •  $title";textSize=21f;setTextColor(Color.WHITE);setBackgroundColor(navy);setPadding(24,38,18,30)}
-  outer.addView(head)
-  val scroll=ScrollView(this);body=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(22,18,22,22)}
-  scroll.addView(body);outer.addView(scroll);setContentView(outer)
+  val login=title=="Acceso seguro"
+  val outer=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(navy)}
+  if(Build.VERSION.SDK_INT>=35){
+   outer.setOnApplyWindowInsetsListener{_,ins->
+    val bars=ins.getInsets(WindowInsets.Type.systemBars())
+    outer.setPadding(bars.left,bars.top,bars.right,bars.bottom)
+    ins
+   }
+  }
+  val top=LinearLayout(this).apply{
+   orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL
+   setPadding(d(15),d(13),d(15),d(15));setBackgroundColor(navy)
+  }
+  top.addView(logo(),LinearLayout.LayoutParams(d(102),d(50)))
+  val names=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(d(13),0,0,0)}
+  names.addView(line(if(login)"Acceso seguro" else title,19f,Color.WHITE,true))
+  names.addView(line("FERRETERÍA  •  COTIZACIONES  •  INVENTARIO",9f,Color.rgb(207,230,232)))
+  top.addView(names);outer.addView(top)
+  val scroll=ScrollView(this).apply{setBackgroundColor(pale);fillViewport=true}
+  body=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(d(17),d(16),d(17),d(25))}
+  scroll.addView(body)
+  outer.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
+  if(!login){
+   val nav=LinearLayout(this).apply{
+    orientation=LinearLayout.HORIZONTAL;setPadding(d(8),d(7),d(8),d(5));gravity=Gravity.CENTER
+    background=round(Color.WHITE,0)
+   }
+   navItem(nav,"Inicio",android.R.drawable.ic_menu_view,title=="Inicio"){home()}
+   navItem(nav,"Cotizaciones",android.R.drawable.ic_menu_edit,title=="Cotizaciones"){quotes()}
+   navItem(nav,"Productos",android.R.drawable.ic_menu_agenda,title=="Productos"){products()}
+   navItem(nav,"Inventario",android.R.drawable.ic_menu_sort_by_size,title.contains("Kardex")){inventory()}
+   outer.addView(nav,LinearLayout.LayoutParams(-1,d(65)))
+  }
+  setContentView(outer)
  }
- private fun button(label:String,action:()->Unit) {
-  val b=Button(this).apply{text=label;setTextColor(Color.WHITE);setBackgroundTintList(android.content.res.ColorStateList.valueOf(green));setOnClickListener{action()}}
-  body.addView(b)
+ private fun button(label:String,action:()->Unit){
+  val b=line(label,15f,Color.WHITE,true).apply{
+   gravity=Gravity.CENTER;minHeight=d(52)
+   setPadding(d(12),d(13),d(12),d(13))
+   background=round(green,13)
+   isClickable=true;isFocusable=true;setOnClickListener{action()}
+   elevation=d(2).toFloat()
+  }
+  body.addView(b,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(9),0,d(5))})
  }
- private fun label(t:String) {body.addView(TextView(this).apply{text=t;textSize=17f;setTextColor(navy);setPadding(4,14,4,14)})}
- private fun input(hint:String,number:Boolean=false):EditText {
-  val e=EditText(this).apply{this.hint=hint;setSingleLine(true);if(number) inputType=InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL}
-  body.addView(e);return e
+ private fun label(t:String){
+  body.addView(line(t,15f,navy,true),LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(12),0,d(7))})
+ }
+ private fun input(hint:String,number:Boolean=false):EditText{
+  val e=EditText(this).apply{
+   this.hint=hint;setSingleLine(true);textSize=15f;setTextColor(ink)
+   setHintTextColor(muted);setPadding(d(13),d(9),d(13),d(9))
+   background=round(Color.WHITE,12,border)
+   if(number)inputType=InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+   minHeight=d(50)
+  }
+  body.addView(e,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(3),0,d(7))});return e
  }
  private fun choice(items:List<String>):Spinner {
   val s=Spinner(this);s.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,items);body.addView(s);return s
@@ -76,15 +196,74 @@ class MainActivity:Activity() {
    } else if(pin==prefs.getString("pin",""))home() else toast("PIN incorrecto")
   }
  }
+
  private fun home(){
   screen("Inicio")
-  label("Cotizaciones • Inventario • Clientes")
-  button("＋ NUEVA COTIZACIÓN"){newQuote()}
-  button("Productos / Catálogo"){products()}
-  button("Clientes"){clients()}
-  button("Historial de cotizaciones"){quotes()}
-  button("Kardex y alertas"){inventory()}
-  button("Bloquear"){lock()}
+  val hero=LinearLayout(this).apply{
+   orientation=LinearLayout.VERTICAL;setPadding(d(19),d(20),d(19),d(20))
+   background=GradientDrawable(GradientDrawable.Orientation.TL_BR,intArrayOf(navy,Color.rgb(8,87,93))).apply{cornerRadius=d(19).toFloat()}
+  }
+  hero.addView(line("¡Hola! Bienvenido a BELSIPERU",21f,Color.WHITE,true))
+  hero.addView(line("Tu negocio organizado, desde un solo lugar.",13f,Color.WHITE))
+  body.addView(hero)
+  button("＋  NUEVA COTIZACIÓN"){newQuote()}
+  heading("Accesos rápidos","Todo lo que necesitas para gestionar tu ferretería")
+  tileRow(tile("Cotizaciones","Historial y PDF",android.R.drawable.ic_menu_edit){quotes()},tile("Productos","Catálogo y fotos",android.R.drawable.ic_menu_agenda){products()})
+  tileRow(tile("Inventario","Stock y Kardex",android.R.drawable.ic_menu_sort_by_size){inventory()},tile("Clientes","Datos y contactos",android.R.drawable.ic_menu_myplaces){clients()})
+  tileRow(tile("Compras","Ingresos de stock",android.R.drawable.ic_input_add){purchases()},tile("Reportes","Resumen de gestión",android.R.drawable.ic_menu_info_details){reports()})
+  heading("Resumen del negocio")
+  val q=queryCount("SELECT COUNT(*) FROM quotes")
+  val p=queryCount("SELECT COUNT(*) FROM products")
+  val low=queryCount("SELECT COUNT(*) FROM products WHERE stock<=min_stock")
+  tileRow(tile(q.toString()+" cotizaciones","Historial guardado",android.R.drawable.ic_menu_edit){quotes()},tile(p.toString()+" productos","En catálogo",android.R.drawable.ic_menu_agenda){products()})
+  if(low>0)info("Atención: "+low+" producto(s) con stock bajo","Revisa Inventario para reponer existencias.",Color.rgb(169,105,19))
+  button("⚙  Configuración"){settings()}
+  body.addView(line("BELSIPERU V2 • Prototipo de uso local",11f,muted).apply{gravity=Gravity.CENTER})
+ }
+ private fun purchases(){
+  screen("Compras")
+  heading("Ingreso de mercadería","Registro básico de stock y Kardex")
+  val ids=mutableListOf<Long>();val names=mutableListOf<String>()
+  val cur=db.readableDatabase.rawQuery("SELECT id,name FROM products ORDER BY name",null)
+  while(cur.moveToNext()){ids.add(cur.getLong(0));names.add(cur.getString(1))}
+  cur.close()
+  if(names.isEmpty()){info("Sin productos","Registra primero un producto en el catálogo.");button("Ir a productos"){products()};return}
+  label("Producto");val product=choice(names)
+  val qty=input("Unidades recibidas",true)
+  val reason=input("Referencia de compra o proveedor")
+  button("Registrar ingreso"){
+   val count=qty.text.toString().toIntOrNull()?:0
+   if(count<=0){toast("Ingresa una cantidad válida");return@button}
+   val idx=product.selectedItemPosition
+   val database=db.writableDatabase;database.beginTransaction()
+   try{
+    database.execSQL("UPDATE products SET stock=stock+? WHERE id=?",arrayOf(count,ids[idx]))
+    database.execSQL("INSERT INTO movements(product,qty,reason,created) VALUES(?,?,?,?)",arrayOf(names[idx],count,"INGRESO: "+reason.text.toString(),today()))
+    database.setTransactionSuccessful()
+   }finally{database.endTransaction()}
+   toast("Ingreso registrado correctamente");inventory()
+  }
+  info("Módulo inicial","Las órdenes de compra y los proveedores completos aún están en desarrollo.",Color.rgb(169,105,19))
+ }
+ private fun reports(){
+  screen("Reportes")
+  heading("Resumen comercial","Indicadores básicos guardados en este teléfono")
+  val q=queryCount("SELECT COUNT(*) FROM quotes")
+  val sold=queryCount("SELECT COUNT(*) FROM quotes WHERE status='VENDIDA'")
+  val units=queryCount("SELECT COALESCE(SUM(stock),0) FROM products")
+  val low=queryCount("SELECT COUNT(*) FROM products WHERE stock<=min_stock")
+  info("Cotizaciones",q.toString()+" registros")
+  info("Ventas confirmadas",sold.toString()+" operaciones")
+  info("Unidades en stock",units.toString()+" unidades")
+  info("Productos con stock bajo",low.toString()+" alertas",if(low>0)Color.rgb(169,105,19) else green)
+  info("Pendiente","Rentabilidad y exportación a Excel se añadirán después.")
+ }
+ private fun settings(){
+  screen("Configuración")
+  heading("BELSIPERU V2","Diseño marino, verde y dorado")
+  info("Protección del PIN","El PIN actual es de prototipo: no guardes información sensible ni real hasta reforzar la seguridad.",Color.rgb(169,105,19))
+  button("Bloquear aplicación"){lock()}
+  button("Volver al inicio"){home()}
  }
  private fun products(){
   screen("Productos");button("← Inicio"){home()}
