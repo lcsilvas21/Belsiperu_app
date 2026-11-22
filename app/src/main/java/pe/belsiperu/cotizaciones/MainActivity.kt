@@ -1636,14 +1636,14 @@ class MainActivity:Activity() {
    val target=targetCurrency();val rate=currentRate()
    var total=0.0
    if(picked.isEmpty())selectedList.addView(line("Todavía no agregaste productos.",13f,muted))
-   for((i,line) in picked.withIndex()){
-    val subtotal=if(rate>0)quoteLineNumbers(line,target,rate).second else 0.0
+   for((i,draft) in picked.withIndex()){
+    val subtotal=if(rate>0)quoteLineNumbers(draft,target,rate).second else 0.0
     total+=subtotal
     val entry=card()
-    entry.addView(line(line.product.name,15f,navy,true))
+    entry.addView(line(draft.product.name,15f,navy,true))
     entry.addView(line(
-     line.quantity.toString()+" "+line.product.unit+" × "+line.product.currency+" "+
-     money(line.netUnitPrice)+" · Desc. "+money(line.discountPct)+" %",12f,muted))
+     draft.quantity.toString()+" "+draft.product.unit+" × "+draft.product.currency+" "+
+     money(draft.netUnitPrice)+" · Desc. "+money(draft.discountPct)+" %",12f,muted))
     entry.addView(line("Total: "+target+" "+money(subtotal),14f,green,true))
     val remove=line("Quitar",13f,Color.rgb(162,45,38),true).apply{
      setPadding(d(8),d(9),d(8),d(9))
