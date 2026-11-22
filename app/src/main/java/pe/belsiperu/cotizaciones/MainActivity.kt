@@ -2842,6 +2842,7 @@ class MainActivity:Activity() {
   }finally{cc.close()}
  }
  private fun writePdfProformaAdaptada(id:Long,out:java.io.OutputStream){
+  val company=companyInfo()
   val cur=db.readableDatabase.rawQuery(
     "SELECT client,product,qty,unit_price,discount,igv,currency,total,created,discount_amount,tax_affectation FROM quotes WHERE id=?",
     arrayOf(id.toString()))
@@ -2875,7 +2876,7 @@ class MainActivity:Activity() {
    val currName=if(currency=="USD")"DÓLARES" else "SOLES"
    val expiry=pdfExpiry.ifBlank{"POR DEFINIR"}
    val docType=when(document.length){11->"RUC ";8->"DNI ";else->""}
-   fun fmt(v:Double)=String.format(Locale.US,"%,.2f",v)
+   fun fmt(v:Double)=pdfNumber(v,company.decimals)
    fun words(v:Int):String{
     if(v==0)return "CERO"
     val u=arrayOf("","UN","DOS","TRES","CUATRO","CINCO","SEIS","SIETE","OCHO","NUEVE",
@@ -2974,25 +2975,18 @@ class MainActivity:Activity() {
     fun rect(x:Float,y:Float,x2:Float,y2:Float,color:Int){
      p.color=color;p.style=Paint.Style.FILL;canvas.drawRect(x,y,x2,y2,p)
     }
-    fun logo(box:RectF){
-     try{
-      assets.open("belsiperu_logo.png").use{ins->
-       val bitmap=BitmapFactory.decodeStream(ins)
-       if(bitmap!=null){canvas.drawBitmap(bitmap,null,box,Paint(Paint.ANTI_ALIAS_FLAG));bitmap.recycle()}
-      }
-     }catch(_:Exception){}
-    }
+    fun logo(box:RectF){drawCompanyLogo(canvas,box)}
     val num="0002-"+id.toString().padStart(7,'0')
     if(ticket){
      // Recibo legible a 80 mm, de longitud suficiente para las cuentas bancarias.
      logo(RectF(61f,8f,166f,62f))
-     center("BELSIPERU S.A.C",8f,219f,72f,12f,true)
-     center("RUC 20605060634",8f,219f,88f,10f)
+     fit(company.legal,9f,72f,209f,12f,true)
+     center("RUC "+company.ruc,8f,219f,88f,10f)
      rect(9f,96f,218f,121f,Color.rgb(235,235,235))
      center("PROFORMA",9f,218f,113f,15f,true)
      center(num,9f,218f,138f,10.5f)
-     center("JR. LOS TOPACIOS NRO. 2125 INT. T18",9f,218f,153f,7.4f)
-     center("SAN JUAN DE LURIGANCHO - LIMA",9f,218f,165f,7.5f)
+     fit(company.fiscal,9f,153f,207f,7.4f)
+     fit(company.header,9f,165f,207f,7.2f)
      stroke(9f,174f,218f,174f)
      text("EMISIÓN:",9f,190f,8f,true);right(date,217f,190f,8f)
      text("VENCIMIENTO:",9f,205f,8f,true);fit(expiry,101f,205f,117f,8f)
@@ -3025,28 +3019,26 @@ class MainActivity:Activity() {
      stroke(9f,572f,218f,572f)
      fit("USUARIO: "+pdfSeller,9f,586f,207f,8f)
      fit("PAGO: "+pdfPayment,9f,601f,207f,8f)
-     text("BELSIPERU S.A.C - INTERBANK",9f,619f,8f,true)
-     text("Cta. soles: 20030088110506",9f,633f,8f)
-     text("CCI soles: 00320000300881050636",9f,646f,8f)
-     text("Cta. dólares: 2003008810513",9f,667f,8f)
-     text("CCI dólares: 00320000300881051332",9f,680f,8f)
-     stroke(9f,693f,218f,693f)
-     wrapped("Los productos en stock se entregan en 48 horas, salvo venta previa.",207f,8.2f,3)
-      .forEachIndexed{i,t->center(t,9f,218f,714f+i*12f,8.2f)}
-     center("BELSIPERU",9f,218f,776f,10f,true)
+      val ticketBanks=pdfTextLines(company.banks,205f,7.7f,75)
+      text("CUENTAS BANCARIAS",9f,619f,8f,true)
+      ticketBanks.take(6).forEachIndexed{i,value->fit(value,9f,633f+i*11f,207f,7.7f)}
+      stroke(9f,706f,218f,706f)
+      pdfTextLines(company.footer,205f,7.5f,3)
+       .forEachIndexed{i,value->fit(value,9f,721f+i*11f,207f,7.5f)}
+      center(company.commercial.ifBlank{company.legal},9f,218f,776f,10f,true)
      center("Proforma comercial. No es comprobante tributario.",9f,218f,793f,6.5f)
      canvas.restore()
     } else {
      // Composición apaisada para A4 y A5: la tabla ocupa el ancho útil de la hoja.
      val left=20f;val rightEdge=822f
      logo(RectF(22f,18f,132f,96f))
-     text("BELSIPERU S.A.C",144f,31f,16f,true)
-     fit("JR. LOS TOPACIOS NRO. 2125 INT. T18",144f,48f,450f,10f)
-     fit("COO. LA HUAYRONA - LIMA - SAN JUAN DE LURIGANCHO",144f,62f,455f,9f)
-     text("LO MEJOR EN MÁQUINAS Y HERRAMIENTAS INDUSTRIALES PARA EL PERÚ",144f,86f,10f)
+     fit(company.legal,144f,31f,460f,16f,true)
+     fit(company.fiscal,144f,48f,455f,9f)
+     fit(company.business+" · "+company.regime,144f,62f,455f,8f)
+     fit(company.header,144f,86f,470f,10f)
      stroke(621f,17f,821f,17f);stroke(621f,105f,821f,105f)
      stroke(621f,17f,621f,105f);stroke(821f,17f,821f,105f)
-     center("RUC 20605060634",621f,821f,37f,13f)
+     center("RUC "+company.ruc,621f,821f,37f,13f)
      rect(621f,47f,821f,77f,Color.rgb(235,235,235))
      center("PROFORMA",621f,821f,69f,17f,true)
      center(num,621f,821f,98f,13f)
@@ -3108,18 +3100,21 @@ class MainActivity:Activity() {
      text("CUENTAS BANCARIAS",20f,490f,8.8f,true)
      fit(pdfSeller+" - "+date+" "+time,151f,464f,420f,9f)
      fit(pdfPayment,151f,477f,405f,9f)
-     text("BELSIPERU S.A.C",151f,490f,8.8f)
-     text("Cuenta soles Interbank: 20030088110506",151f,508f,8.6f)
-     text("CCI soles: 00320000300881050636",151f,520f,8.6f)
-     text("Cuenta dólares Interbank: 2003008810513",498f,508f,8.6f)
-     text("CCI dólares: 00320000300881051332",498f,520f,8.6f)
-     center("Los productos en stock se entregan en 48 horas, salvo venta previa.",left,rightEdge,551f,9f)
-     center("BELSIPERU",left,rightEdge,578f,11f,true)
+      fit(company.legal,151f,490f,660f,8.8f)
+      val landscapeBanks=pdfTextLines(company.banks,660f,7.8f,75)
+      landscapeBanks.take(5).forEachIndexed{i,value->fit(value,151f,500f+i*9f,659f,7.8f)}
+      pdfTextLines(company.footer,790f,8.2f,2)
+       .forEachIndexed{i,value->fit(value,left,551f+i*11f,795f,8.2f)}
+      center(company.commercial.ifBlank{company.legal},left,rightEdge,578f,11f,true)
      center("Proforma comercial emitida por BELSIPERU. No es comprobante de pago electrónico.",left,rightEdge,591f,7.2f)
     }
     canvas.restore()
     productPicture?.recycle()
     pdf.finishPage(page)
+    val allBanks=pdfTextLines(company.banks,if(ticket)205f else 660f,
+     if(ticket)7.7f else 7.8f,300)
+    addBankContinuationPages(pdf,allBanks.drop(if(ticket)6 else 5),
+     pageWidth,pageHeight)
     pdf.writeTo(out)
    }finally{pdf.close()}
   }finally{cur.close()}
