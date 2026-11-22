@@ -181,6 +181,41 @@ class MainActivity:Activity() {
   }
   return result.take(limit)
  }
+ private fun addBankContinuationPages(pdf:android.graphics.pdf.PdfDocument,
+  remaining:List<String>,pageW:Int,pageH:Int,fromPage:Int=2){
+  if(remaining.isEmpty())return
+  val isTicket=pageW<300
+  val margin=if(isTicket)12f else 28f
+  val pointSize=if(isTicket)7f else 9f
+  val step=if(isTicket)12f else 15f
+  val available=pageW.toFloat()-margin*2
+  val text=Paint(Paint.ANTI_ALIAS_FLAG).apply{
+   color=Color.BLACK;textSize=pointSize
+  }
+  var idx=0;var pageNumber=fromPage
+  while(idx<remaining.size){
+   val page=pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(
+    pageW,pageH,pageNumber++).create())
+   val canvas=page.canvas
+   text.typeface=Typeface.DEFAULT_BOLD;text.textSize=if(isTicket)10f else 15f
+   canvas.drawText("CUENTAS BANCARIAS · CONTINUACIÓN",margin,42f,text)
+   text.typeface=Typeface.DEFAULT;text.textSize=pointSize
+   var y=68f
+   while(idx<remaining.size&&y<pageH-65f){
+    val value=remaining[idx++]
+    // Los datos se imprimen exactamente como fueron ingresados; no se inventan bancos.
+    val safe=pdfTextLines(value,available,pointSize,30)
+    for(line in safe){
+     if(y>=pageH-65f){idx--;break}
+     canvas.drawText(line,margin,y,text);y+=step
+    }
+   }
+   text.typeface=Typeface.DEFAULT;text.textSize=if(isTicket)6f else 8f
+   canvas.drawText("Documento comercial - no es comprobante tributario.",margin,
+    pageH-20f,text)
+   pdf.finishPage(page)
+  }
+ }
  private fun settingTextArea(title:String,value:String,lines:Int=4):EditText{
   label(title)
   val e=EditText(this).apply{
