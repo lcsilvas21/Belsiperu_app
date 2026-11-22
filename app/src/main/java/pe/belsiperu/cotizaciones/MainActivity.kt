@@ -594,25 +594,65 @@ class MainActivity:Activity() {
    text("FECHA EMISIÓN",365.9f,133.3f,8.47f,true);right(curDate,520f,133.3f,8.47f)
    text("FECHA VENCIMIENTO",365.9f,145.5f,8.47f,true);right(expiry,520f,145.5f,8.47f)
    text("MONEDA",365.9f,157.7f,8.47f,true);fit(if(currency=="USD")"DÓLARES" else "SOLES",469.4f,157.7f,71f,8.47f)
-   // Cabecera negra y cuadrícula alta, igual al modelo suministrado.
-   val xs=floatArrayOf(15.05f,36.68f,86.54f,134.51f,360.26f,399.76f,455.26f,501.35f,544.62f)
-   rect(15.05f,186.24f,544.62f,200.35f,Color.BLACK)
+   // Geometría ÚNICA para las ocho columnas: bordes, títulos y valores.
+   // Cada valor se centra o alinea dentro de su propia celda, sin coordenadas manuales.
+   val tableLeft=15.05f
+   val tableRight=544.62f
+   val topHeader=186.24f
+   val bottomHeader=200.35f
+   val tableBottom=473.13f
+   val xs=floatArrayOf(tableLeft,36.68f,86.54f,134.51f,360.26f,399.76f,455.26f,501.35f,tableRight)
    val heads=arrayOf("Nº","UNIDAD","CÓDIGO","DESCRIPCIÓN","CANT.","V. UNIT.","DSCTO","TOTAL")
-   for(k in heads.indices){
-    val x=xs[k];val rr=xs[k+1];font(9.4f,true,Color.WHITE)
-    canvas.drawText(heads[k],x+(rr-x-p.measureText(heads[k]))/2f,198f,p)
+   // Columna (0-7); alineación (0 izquierda, 1 centro, 2 derecha).
+   fun tableCell(col:Int,value:String,baseline:Float,alignment:Int,size:Float=8f,
+                 bold:Boolean=false,color:Int=Color.BLACK){
+    val left=xs[col]+4f
+    val rightEdge=xs[col+1]-4f
+    val available=rightEdge-left
+    var textSize=size
+    font(textSize,bold,color)
+    while(textSize>6.2f && p.measureText(value)>available){
+     textSize-=0.25f
+     font(textSize,bold,color)
+    }
+    var label=value
+    if(p.measureText(label)>available){
+     while(label.isNotEmpty()&&p.measureText(label+"…")>available)label=label.dropLast(1)
+     label+="…"
+    }
+    val textWidth=p.measureText(label)
+    val x=when(alignment){
+     1->left+(available-textWidth)/2f
+     2->rightEdge-textWidth
+     else->left
+    }
+    canvas.save()
+    canvas.clipRect(xs[col]+1f,topHeader,xs[col+1]-1f,tableBottom)
+    canvas.drawText(label,x,baseline,p)
+    canvas.restore()
    }
-   for(x in xs)line(x,200.35f,x,473.13f,0.94f)
-   line(15.05f,473.13f,544.62f,473.13f,0.94f)
-   text("1",24f,209.5f,7.52f)
-   text("UNIDADES",42.8f,209.5f,7.52f)
-   fit(code,90.3f,209.5f,39f,7.52f)
-   wrap(product,219f,7.52f,30).forEachIndexed{k,v->text(v,138.9f,209.5f+k*8.5f,7.52f)}
-   right(amount(qty),396f,209.5f,7.52f)
-   right(amount(unitPrice),451.5f,209.5f,7.52f)
-   right(amount(discount),498f,209.5f,7.52f)
-   right(amount(net),536.4f,209.5f,7.52f)
-   // Total en letras y resumen.
+   // Barra negra y bordes externos con trazos consistentes.
+   rect(tableLeft,topHeader,tableRight,bottomHeader,Color.BLACK)
+   for(k in heads.indices){
+    tableCell(k,heads[k],197.3f,1,if(k==3)9f else 8.5f,true,Color.WHITE)
+   }
+   for(x in xs)line(x,bottomHeader,x,tableBottom,0.8f)
+   line(tableLeft,tableBottom,tableRight,tableBottom,0.8f)
+   // Todos los renglones usan la misma línea base para que no se vean desparejos.
+   val rowBaseline=211.0f
+   tableCell(0,"1",rowBaseline,1,7.8f)
+   tableCell(1,"UNIDADES",rowBaseline,1,7.8f)
+   tableCell(2,code,rowBaseline,1,7.8f)
+   val descriptionLines=wrap(product,xs[4]-xs[3]-8f,7.8f,29)
+   descriptionLines.forEachIndexed{k,wordLine->
+    val baseline=rowBaseline+k*8.6f
+    if(baseline<tableBottom-3f)tableCell(3,wordLine,baseline,0,7.8f)
+   }
+   tableCell(4,amount(qty),rowBaseline,2,7.8f)
+   tableCell(5,amount(unitPrice),rowBaseline,2,7.8f)
+   tableCell(6,amount(discount),rowBaseline,2,7.8f)
+   tableCell(7,amount(net),rowBaseline,2,7.8f)
+      // Total en letras y resumen.
    line(15.05f,489.59f,544.62f,489.59f,0.94f)
    line(15.52f,473.13f,15.52f,490.06f,0.94f);line(544.15f,473.13f,544.15f,490.06f,0.94f)
    var literalSize=8.47f;font(literalSize)
