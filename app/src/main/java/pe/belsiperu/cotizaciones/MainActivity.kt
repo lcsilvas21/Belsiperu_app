@@ -1859,87 +1859,123 @@ class MainActivity:Activity() {
   label("Las cotizaciones se guardan al pulsar el botón. Las consultas y selecciones no modifican el inventario.")
  }
  private fun quotes(){
-  screen("Cotizaciones");button("← Inicio"){home()}
-  val c=db.readableDatabase.rawQuery("SELECT id,client,product,qty,total,currency,status,include_product_photo FROM quotes ORDER BY id DESC",null)
+  screen("Cotizaciones")
+  button("＋ Nueva cotización"){newQuote()}
+  heading("Historial de cotizaciones","Consulta productos incluidos, exporta proformas y confirma ventas.")
+  val c=db.readableDatabase.rawQuery(
+   "SELECT id,client,total,currency,status FROM quotes ORDER BY id DESC",null)
   try{
    while(c.moveToNext()){
-    val id=c.getLong(0);val status=c.getString(6)
-    val photoLabel=if(c.getInt(7)==1)"Con foto" else "Sin foto"
-    label("COT-${id.toString().padStart(6,'0')} • $status • $photoLabel\n${c.getString(1)}\n${c.getInt(3)} × ${c.getString(2)}\n${c.getString(5)} ${"%.2f".format(Locale.US,c.getDouble(4))}")
-    button("Exportar PDF COT-${id}"){pdfOptions(id)}
-    if(status=="PENDIENTE")button("Confirmar venta COT-${id}"){confirm(id)}
+    val quoteId=c.getLong(0)
+    val client=c.getString(1)?:""
+    val total=c.getDouble(2)
+    val currency=c.getString(3)?:"PEN"
+    val status=c.getString(4)?:"PENDIENTE"
+    val cardView=card()
+    cardView.addView(line("COT-"+quoteId.toString().padStart(6,'0')+" · "+status,15f,navy,true))
+    cardView.addView(line(client,14f,ink))
+    var count=0;var withPhoto=false
+    val lines=db.readableDatabase.rawQuery(
+     "SELECT qty,name,include_product_photo FROM quote_items WHERE quote_id=? ORDER BY id",
+     arrayOf(quoteId.toString()))
+    try{while(lines.moveToNext()){
+     count++
+     if(count<=4)cardView.addView(line(
+      lines.getInt(0).toString()+" × "+(lines.getString(1)?:"Producto"),12f,muted))
+     if(lines.getInt(2)==1)withPhoto=true
+    }}finally{lines.close()}
+    if(count>4)cardView.addView(line("+"+(count-4)+" producto(s) más",12f,muted))
+    cardView.addView(line(currency+" "+String.format(Locale.US,"%,.2f",total)+
+     " · "+count+" producto(s)"+(if(withPhoto)" · Con fotos" else ""),
+     16f,green,true))
+    val export=line("Exportar PDF",14f,green,true).apply{
+     setPadding(d(8),d(12),d(8),d(12))
+     isClickable=true;isFocusable=true;setOnClickListener{pdfOptions(quoteId)}
+    }
+    cardView.addView(export)
+    if(status=="PENDIENTE"){
+     val sale=line("Confirmar venta",14f,green,true).apply{
+      setPadding(d(8),d(12),d(8),d(12))
+      isClickable=true;isFocusable=true;setOnClickListener{confirm(quoteId)}
+     }
+     cardView.addView(sale)
+    }
+    body.addView(cardView,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(6),0,d(8))})
    }
   }finally{c.close()}
  }
 
  private fun confirm(id:Long){
   AlertDialog.Builder(this).setTitle("Confirmar venta")
-   .setMessage("Se registrará la venta. Para productos físicos se revisará el stock y se descontará una sola vez.")
+   .setMessage("Se descontará el stock de todos los productos físicos de esta cotización una sola vez. ¿Continuar?")
    .setNegativeButton("Cancelar",null).setPositiveButton("Confirmar"){_,_->
     val database=db.writableDatabase
     var error:String?=null
-    database.beginTransaction()
     try{
-     val quote=database.rawQuery(
-      "SELECT product,qty,status,product_id FROM quotes WHERE id=?",
-      arrayOf(id.toString()))
-     var name="";var quantity=0;var pending=false;var productId:Long?=null
-     try{if(quote.moveToFirst()){
-      name=quote.getString(0)?:""
-      quantity=quote.getInt(1)
-      pending=quote.getString(2)=="PENDIENTE"
-      if(!quote.isNull(3))productId=quote.getLong(3)
-     }}finally{quote.close()}
-     if(!pending){error="Esta cotización ya fue confirmada o no existe."}
-     else{
-      val product=if(productId!=null){
-       database.rawQuery("SELECT id,kind,stock,sell_without_stock FROM products WHERE id=?",
-        arrayOf(productId.toString()))
-      }else{
-       database.rawQuery("SELECT id,kind,stock,sell_without_stock FROM products WHERE name=? ORDER BY id DESC LIMIT 1",
-        arrayOf(name))
+     database.beginTransaction()
+     val quote=database.rawQuery("SELECT status FROM quotes WHERE id=?",arrayOf(id.toString()))
+     val pending=try{quote.moveToFirst()&&quote.getString(0)=="PENDIENTE"}
+      finally{quote.close()}
+     if(!pending)throw IllegalStateException("La cotización ya fue confirmada o no existe.")
+     val requirements=mutableMapOf<Long,Int>()
+     val names=mutableMapOf<Long,String>()
+     val items=database.rawQuery(
+      "SELECT product_id,name,qty FROM quote_items WHERE quote_id=?",arrayOf(id.toString()))
+     var found=0
+     try{
+      while(items.moveToNext()){
+       found++
+       val name=items.getString(1)?:""
+       val qty=items.getInt(2)
+       if(qty<=0)throw IllegalStateException("La cotización contiene cantidades incorrectas.")
+       val source=if(!items.isNull(0))
+        database.rawQuery("SELECT id FROM products WHERE id=? LIMIT 1",
+         arrayOf(items.getLong(0).toString()))
+       else database.rawQuery(
+        "SELECT id FROM products WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(name))
+       val productId=try{if(source.moveToFirst())source.getLong(0) else null}
+        finally{source.close()}
+       if(productId==null)throw IllegalStateException(
+        "El producto "+name+" ya no está disponible en el catálogo.")
+       requirements[productId]=(requirements[productId]?:0)+qty
+       names[productId]=name
       }
-      var itemId:Long?=null;var kind="PRODUCTO";var available=0;var allowOversell=false
-      try{if(product.moveToFirst()){
-       itemId=product.getLong(0);kind=product.getString(1)?:"PRODUCTO"
-       available=product.getInt(2);allowOversell=product.getInt(3)==1
-      }}finally{product.close()}
-      if(itemId==null){error="El producto ya no existe en el catálogo."}
-      else if(kind=="SERVICIO"){
-       // Los servicios no deben descontar stock ni generar movimientos físicos.
-       database.execSQL("UPDATE quotes SET status='VENDIDA' WHERE id=?",arrayOf(id))
-      }else if(quantity>available && !allowOversell){
-       error="Stock insuficiente: hay "+available+" unidades. Activa 'Ventas sin stock' en el producto si corresponde."
-      }else{
-       database.execSQL("UPDATE products SET stock=stock-? WHERE id=?",arrayOf(quantity,itemId))
+     }finally{items.close()}
+     if(found==0)throw IllegalStateException("La cotización no tiene productos.")
+     // Verifica TODAS las cantidades antes de descontar cualquiera.
+     for((productId,qty) in requirements){
+      val product=database.rawQuery(
+       "SELECT kind,stock,sell_without_stock FROM products WHERE id=?",
+       arrayOf(productId.toString()))
+      try{
+       if(!product.moveToFirst())throw IllegalStateException("Producto no encontrado.")
+       val service=product.getString(0)=="SERVICIO"
+       val stock=product.getInt(1)
+       val allowOversell=product.getInt(2)==1
+       if(!service && qty>stock && !allowOversell)
+        throw IllegalStateException("Stock insuficiente para "+(names[productId]?:"producto")+
+         ": disponibles "+stock+", solicitadas "+qty+".")
+      }finally{product.close()}
+     }
+     for((productId,qty) in requirements){
+      val product=database.rawQuery("SELECT kind FROM products WHERE id=?",
+       arrayOf(productId.toString()))
+      val kind=try{if(product.moveToFirst())product.getString(0)?:"PRODUCTO" else ""}
+       finally{product.close()}
+      if(kind!="SERVICIO"){
+       database.execSQL("UPDATE products SET stock=stock-? WHERE id=?",
+        arrayOf(qty,productId))
        database.execSQL("INSERT INTO movements(product,qty,reason,created) VALUES(?,?,?,?)",
-        arrayOf(name,-quantity,"VENTA COT-"+id,today()))
-       database.execSQL("UPDATE quotes SET status='VENDIDA' WHERE id=?",arrayOf(id))
+        arrayOf(names[productId]?:"Producto",-qty,"VENTA COT-"+id,today()))
       }
      }
-     if(error==null)database.setTransactionSuccessful()
-    }catch(e:Exception){
-     error="No se pudo confirmar la venta: "+(e.message?:"Error de base de datos")
-    }finally{database.endTransaction()}
+     database.execSQL("UPDATE quotes SET status='VENDIDA' WHERE id=? AND status='PENDIENTE'",
+      arrayOf(id))
+     database.setTransactionSuccessful()
+    }catch(e:Exception){error=e.message?:"Error al confirmar venta"}
+    finally{if(database.inTransaction())database.endTransaction()}
     if(error!=null)toast(error!!) else{toast("Venta confirmada");quotes()}
    }.show()
- }
- private fun inventory(){
-  screen("Kardex / Stock");button("← Inicio"){home()}
-  val c=db.readableDatabase.rawQuery("SELECT name,stock,min_stock FROM products WHERE kind='PRODUCTO' ORDER BY name",null)
-  while(c.moveToNext()){val s=c.getInt(1);val m=c.getInt(2);label("${c.getString(0)}: $s unidades ${if(s<=m)"⚠ REPOSICIÓN SUGERIDA: ${m-s}" else ""}")}
-  c.close()
-  label("Últimos movimientos")
-  val moves=db.readableDatabase.rawQuery("SELECT product,qty,reason,created FROM movements ORDER BY id DESC LIMIT 30",null)
-  while(moves.moveToNext())label("${moves.getString(3)} • ${moves.getString(0)} • ${moves.getInt(1)} • ${moves.getString(2)}")
-  moves.close()
- }
- private fun selectPhoto(id:Long){
-  pendingPhotoProduct=id
-  val intent=Intent(Intent.ACTION_OPEN_DOCUMENT).apply{
-   addCategory(Intent.CATEGORY_OPENABLE);type="image/*"
-  }
-  startActivityForResult(intent,92)
  }
 
  private fun pdfOptions(id:Long){
