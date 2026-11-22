@@ -540,6 +540,295 @@ class MainActivity:Activity() {
   }
   c.close()
  }
+
+ private fun productEditor(editId:Long?=null){
+  val saved=mutableMapOf<String,String>()
+  if(editId!=null){
+   val old=db.readableDatabase.rawQuery("SELECT * FROM products WHERE id=?",arrayOf(editId.toString()))
+   try{
+    if(!old.moveToFirst()){toast("No se encontró el producto");products();return}
+    for(i in 0 until old.columnCount)saved[old.getColumnName(i)]=old.getString(i)?:""
+   }finally{old.close()}
+  }
+  fun previous(key:String,default:String="")=saved[key]?.takeIf{it.isNotBlank()}?:default
+  fun bool(key:String)=previous(key)=="1"
+  screen(if(editId==null)"Nuevo producto" else "Editar producto")
+  button("← Volver al catálogo"){draftPhotoPreview=null;products()}
+  heading("Ficha del producto","Registra todos los datos comerciales y de inventario.")
+  pendingDraftPhotoUri=previous("photo_uri").ifBlank{null}
+  val image=ImageView(this).apply{
+   background=round(Color.WHITE,16,border)
+   setPadding(d(12),d(12),d(12),d(12))
+   contentDescription="Fotografía del producto"
+  }
+  showProductImage(image,pendingDraftPhotoUri)
+  draftPhotoPreview=image
+  body.addView(image,LinearLayout.LayoutParams(-1,d(160)).apply{setMargins(0,d(8),0,d(5))})
+  button("＋ Elegir o cambiar fotografía"){
+   startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{
+    addCategory(Intent.CATEGORY_OPENABLE);type="image/*"
+   },93)
+  }
+  lateinit var kind:Spinner
+  lateinit var code:EditText
+  lateinit var barcode:EditText
+  lateinit var category:AutoCompleteTextView
+  lateinit var brand:AutoCompleteTextView
+  lateinit var unit:Spinner
+  lateinit var name:EditText
+  productSection("Información general"){
+   label("Tipo")
+   kind=choice(listOf("Producto","Servicio"))
+   kind.setSelection(if(previous("kind","PRODUCTO")=="SERVICIO")1 else 0)
+   label("Código único *")
+   code=input("Ejemplo: GWS-850")
+   if(editId==null){
+    val nextId=queryCount("SELECT COALESCE(MAX(id),0)+1 FROM products")
+    code.setText("BLP"+nextId.toString().padStart(6,'0'))
+   }else code.setText(previous("code"))
+   label("Código de barras")
+   barcode=input("Opcional; ingresar el código impreso")
+   barcode.setText(previous("barcode"))
+   label("Categoría")
+   category=suggestionField("Escribe o elige una categoría",catalogSuggestions("category"))
+   category.setText(previous("category"))
+   label("Marca")
+   brand=suggestionField("Escribe o elige una marca",catalogSuggestions("brand"))
+   brand.setText(previous("brand"))
+   label("Unidad de medida")
+   val units=mutableListOf("UNIDADES","CAJAS","PAQUETES","DOCENAS","JUEGOS",
+     "METROS","KILOGRAMOS","GRAMOS","LITROS","PARES","BOLSAS","SERVICIOS")
+   val savedUnit=previous("unit","UNIDADES")
+   if(savedUnit !in units)units.add(savedUnit)
+   unit=choice(units)
+   unit.setSelection(units.indexOf(savedUnit).coerceAtLeast(0))
+   label("Nombre o descripción *")
+   name=input("Ejemplo: Amoladora angular Bosch GWS 850")
+   name.setText(previous("name"))
+  }
+  lateinit var currency:Spinner
+  lateinit var salePrice:EditText
+  lateinit var purchasePrice:EditText
+  lateinit var saleIgV:CheckBox
+  lateinit var purchaseIgV:CheckBox
+  productSection("Precios"){
+   label("Moneda")
+   currency=choice(listOf("Soles (PEN)","Dólares (USD)"))
+   currency.setSelection(if(previous("currency","PEN")=="USD")1 else 0)
+   label("Precio de venta")
+   salePrice=input("0.00",true)
+   salePrice.setText(previous("price","0.00"))
+   saleIgV=CheckBox(this@MainActivity).apply{
+    text="Precio de venta incluye IGV 18 %"
+    isChecked=bool("sale_includes_igv")
+   }
+   body.addView(saleIgV)
+   label("Precio de compra")
+   purchasePrice=input("0.00",true)
+   purchasePrice.setText(previous("purchase_price","0.00"))
+   purchaseIgV=CheckBox(this@MainActivity).apply{
+    text="Precio de compra incluye IGV 18 %"
+    isChecked=bool("purchase_includes_igv")
+   }
+   body.addView(purchaseIgV)
+  }
+  val variants=mutableListOf<PriceVariant>()
+  if(editId!=null){
+   val cv=db.readableDatabase.rawQuery(
+    "SELECT label,price FROM product_price_variants WHERE product_id=? ORDER BY id",
+    arrayOf(editId.toString()))
+   try{while(cv.moveToNext())variants.add(PriceVariant(cv.getString(0),cv.getDouble(1)))}
+   finally{cv.close()}
+  }
+  val variantList=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+  fun redrawVariants(){
+   variantList.removeAllViews()
+   if(variants.isEmpty()){
+    variantList.addView(line("No hay variantes de precio registradas.",13f,muted))
+   }else{
+    variants.forEachIndexed{index,variant->
+     val row=LinearLayout(this@MainActivity).apply{
+      orientation=LinearLayout.HORIZONTAL
+      gravity=Gravity.CENTER_VERTICAL
+      setPadding(d(5),d(6),d(5),d(6))
+     }
+     row.addView(line(variant.label+" — "+String.format(Locale.US,"%.2f",variant.price),14f,ink),
+      LinearLayout.LayoutParams(0,-2,1f))
+     val remove=line("Quitar",13f,Color.rgb(167,57,44),true).apply{
+      setPadding(d(7),d(10),d(7),d(10))
+      isClickable=true
+      setOnClickListener{variants.removeAt(index);redrawVariants()}
+     }
+     row.addView(remove)
+     variantList.addView(row)
+    }
+   }
+  }
+  productSection("Variantes de precio"){
+   body.addView(line("Puedes agregar precios mayoristas, por volumen u otros.",13f,muted))
+   body.addView(variantList)
+   label("Nombre de variante")
+   val variantLabel=input("Ejemplo: Precio mayorista")
+   label("Precio de variante")
+   val variantPrice=input("0.00",true)
+   button("＋ Agregar variante"){
+    val labelText=variantLabel.text.toString().trim()
+    val priceValue=variantPrice.text.toString().toDoubleOrNull()
+    if(labelText.isBlank()||priceValue==null||priceValue<0){
+     toast("Ingresa un nombre y un precio válido para la variante")
+    }else if(variants.any{it.label.equals(labelText,true)}){
+     toast("Ya hay una variante con ese nombre")
+    }else{
+     variants.add(PriceVariant(labelText,priceValue))
+     variantLabel.setText("");variantPrice.setText("")
+     redrawVariants()
+    }
+   }
+  }
+  redrawVariants()
+  lateinit var tax:Spinner
+  lateinit var isc:Spinner
+  lateinit var sunatCode:EditText
+  lateinit var icbper:CheckBox
+  productSection("Configuración SUNAT"){
+   body.addView(line("Estos son datos de clasificación; la app todavía no emite comprobantes electrónicos.",12f,muted))
+   label("Tipo de afectación IGV")
+   tax=choice(listOf("Gravado","Exonerado","Inafecto"))
+   tax.setSelection(when(previous("tax_affectation","GRAVADO")){
+    "EXONERADO"->1;"INAFECTO"->2;else->0
+   })
+   label("Tipo de afectación ISC")
+   val iscItems=listOf("No aplica","Sistema al valor","Monto fijo","Precio venta público")
+   isc=choice(iscItems)
+   isc.setSelection(when(previous("isc_type","NO APLICA")){
+    "SISTEMA AL VALOR"->1;"MONTO FIJO"->2;"PRECIO VENTA PÚBLICO"->3;else->0
+   })
+   label("Código de producto SUNAT")
+   sunatCode=input("Opcional; código UNSPSC / SUNAT")
+   sunatCode.setText(previous("sunat_code"))
+   icbper=CheckBox(this@MainActivity).apply{
+    text="Afectación ICBPER"
+    isChecked=bool("icbper")
+   }
+   body.addView(icbper)
+  }
+  lateinit var sellWithoutStock:CheckBox
+  lateinit var weight:EditText
+  lateinit var stock:EditText
+  lateinit var minStock:EditText
+  productSection("Opciones e inventario"){
+   sellWithoutStock=CheckBox(this@MainActivity).apply{
+    text="Permitir ventas sin stock"
+    isChecked=bool("sell_without_stock")
+   }
+   body.addView(sellWithoutStock)
+   label("Peso por unidad (kg) — opcional")
+   weight=input("0.00",true)
+   weight.setText(previous("weight","0.00"))
+   label("Stock inicial")
+   stock=input("0",true)
+   stock.inputType=InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED
+   stock.setText(previous("stock","0"))
+   label("Stock mínimo")
+   minStock=input("0",true)
+   minStock.inputType=InputType.TYPE_CLASS_NUMBER
+   minStock.setText(previous("min_stock","0"))
+   body.addView(line("Los servicios no manejan stock físico.",12f,muted))
+  }
+  fun refreshKind(){
+   val service=kind.selectedItemPosition==1
+   stock.isEnabled=!service
+   minStock.isEnabled=!service
+   sellWithoutStock.isEnabled=!service
+   stock.alpha=if(service)0.45f else 1f
+   minStock.alpha=if(service)0.45f else 1f
+  }
+  kind.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
+   override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
+   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){refreshKind()}
+  }
+  refreshKind()
+  button(if(editId==null)"✓ Guardar producto" else "✓ Guardar cambios"){
+   val codigo=code.text.toString().trim()
+   val nombre=name.text.toString().trim()
+   if(codigo.isBlank() || nombre.isBlank()){
+    toast("Código único y descripción son obligatorios");return@button
+   }
+   val sale=salePrice.text.toString().toDoubleOrNull()
+   val buy=purchasePrice.text.toString().toDoubleOrNull()
+   val peso=weight.text.toString().toDoubleOrNull()
+   val currentStock=stock.text.toString().toIntOrNull()
+   val minimum=minStock.text.toString().toIntOrNull()
+   if(sale==null||sale<0||buy==null||buy<0||peso==null||peso<0||
+      currentStock==null||currentStock<0||minimum==null||minimum<0){
+    toast("Revisa los precios, el peso y el stock: deben ser números válidos y no negativos.")
+    return@button
+   }
+   val database=db.writableDatabase
+   val duplicated=database.rawQuery(
+    "SELECT id FROM products WHERE code=? AND id<>? LIMIT 1",
+    arrayOf(codigo,(editId?:-1L).toString()))
+   val exists=try{duplicated.moveToFirst()}finally{duplicated.close()}
+   if(exists){toast("Este código único ya existe. Ingresa otro.");return@button}
+   val service=kind.selectedItemPosition==1
+   val taxMode=when(tax.selectedItemPosition){1->"EXONERADO";2->"INAFECTO";else->"GRAVADO"}
+   val iscMode=when(isc.selectedItemPosition){
+    1->"SISTEMA AL VALOR";2->"MONTO FIJO";3->"PRECIO VENTA PÚBLICO";else->"NO APLICA"
+   }
+   val values=android.content.ContentValues().apply{
+    put("code",codigo)
+    put("name",nombre)
+    put("kind",if(service)"SERVICIO" else "PRODUCTO")
+    put("barcode",barcode.text.toString().trim())
+    put("category",category.text.toString().trim())
+    put("brand",brand.text.toString().trim())
+    put("unit",unit.selectedItem.toString())
+    put("price",sale)
+    put("purchase_price",buy)
+    put("currency",if(currency.selectedItemPosition==1)"USD" else "PEN")
+    put("sale_includes_igv",if(taxMode=="GRAVADO"&&saleIgV.isChecked)1 else 0)
+    put("purchase_includes_igv",if(taxMode=="GRAVADO"&&purchaseIgV.isChecked)1 else 0)
+    put("tax_affectation",taxMode)
+    put("isc_type",iscMode)
+    put("sunat_code",sunatCode.text.toString().trim())
+    put("icbper",if(icbper.isChecked)1 else 0)
+    put("sell_without_stock",if(service||sellWithoutStock.isChecked)1 else 0)
+    put("weight",peso)
+    put("stock",if(service)0 else currentStock)
+    put("min_stock",if(service)0 else minimum)
+    put("photo_uri",pendingDraftPhotoUri)
+   }
+   var success=false
+   try{
+    database.beginTransaction()
+    val productId=if(editId==null){
+     database.insertOrThrow("products",null,values)
+    }else{
+     val updated=database.update("products",values,"id=?",arrayOf(editId.toString()))
+     if(updated!=1)throw IllegalStateException("Producto no encontrado")
+     editId
+    }
+    database.delete("product_price_variants","product_id=?",arrayOf(productId.toString()))
+    variants.forEach{v->
+     database.insertOrThrow("product_price_variants",null,android.content.ContentValues().apply{
+      put("product_id",productId);put("label",v.label);put("price",v.price)
+     })
+    }
+    database.setTransactionSuccessful()
+    success=true
+   }catch(e:Exception){
+    toast("No se pudo guardar el producto: "+(e.message?:"Error inesperado"))
+   }finally{
+    if(database.inTransaction())database.endTransaction()
+   }
+   if(success){
+    pendingDraftPhotoUri=null;draftPhotoPreview=null
+    toast(if(editId==null)"Producto registrado" else "Producto actualizado")
+    products()
+   }
+  }
+ }
+
  private fun clients(){
   screen("Clientes")
   heading("Nuevo cliente","Consulta el RUC para completar automáticamente la razón social y la dirección.")
