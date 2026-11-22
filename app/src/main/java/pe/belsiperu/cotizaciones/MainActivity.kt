@@ -2916,6 +2916,230 @@ class MainActivity:Activity() {
  private fun inventory(){
   stockReportScreen()
  }
+
+ private fun stockReportScreen(){
+  val report=try{StockReport.load(db.readableDatabase)}
+   catch(e:Exception){toast("No se pudo leer el stock: "+e.message);return}
+  screen("Inventario · Existencias")
+  button("← Inicio"){home()}
+  heading("Existencias actuales",
+   "Todos los productos físicos registrados, con unidades disponibles, mínimo y alerta de reposición.")
+  info("Resumen del inventario",
+   report.products.size.toString()+" productos · "+report.units+
+   " unidades · "+report.out+" sin stock · "+report.low+" bajo mínimo",
+   if(report.low>0||report.out>0)Color.rgb(166,106,26) else green)
+  button("📄 Ver, imprimir o guardar PDF A4 horizontal"){stockPdfActions()}
+  button("📊 Exportar existencias y Kárdex a Excel (.xlsx)"){stockExcelDocument()}
+  button("📋 Ver Kárdex (movimientos registrados)"){inventoryMovementsScreen()}
+  heading("Listado completo",
+   "Busca por descripción, código o marca. La exportación incluye todos los productos.")
+  label("Buscar producto")
+  val search=input("Código, nombre, marca o categoría")
+  label("Filtrar")
+  val filter=choice(listOf("Todos","Stock bajo","Sin stock","Con stock"))
+  val list=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+  body.addView(list,LinearLayout.LayoutParams(-1,-2))
+  var shown=80
+  fun render(){
+   list.removeAllViews()
+   val term=search.text.toString().trim()
+   val selected=filter.selectedItemPosition
+   val found=report.products.filter{p->
+    (term.isEmpty()||listOf(p.name,p.code,p.brand,p.category)
+     .any{it.contains(term,ignoreCase=true)})&&
+    when(selected){
+     1->p.minimum>0&&p.stock<=p.minimum
+     2->p.stock<=0
+     3->p.stock>0
+     else->true
+    }
+   }
+   list.addView(line("Resultados: "+found.size+" productos",13f,muted,true))
+   if(found.isEmpty()){
+    list.addView(line("No hay productos para este filtro.",13f,muted))
+    return
+   }
+   for(p in found.take(shown)){
+    val entry=card()
+    entry.addView(line(p.code+" · "+p.name,15f,navy,true))
+    val detail=listOf(p.brand,p.category,p.unit).filter{it.isNotBlank()}
+     .joinToString(" · ")
+    if(detail.isNotBlank())entry.addView(line(detail,12f,muted))
+    val stockColor=when(p.status){
+     "SIN STOCK"->Color.rgb(172,49,48)
+     "STOCK BAJO"->Color.rgb(176,107,16)
+     else->green
+    }
+    entry.addView(line("Stock: "+p.stock+" · Mínimo: "+p.minimum+
+     " · "+p.status,13.5f,stockColor,true))
+    if(p.shortage>0&&p.minimum>0){
+     entry.addView(line("Unidades para alcanzar el mínimo: "+p.shortage,12f,muted))
+    }
+    list.addView(entry,LinearLayout.LayoutParams(-1,-2).apply{
+     setMargins(0,d(6),0,d(6))
+    })
+   }
+   if(found.size>shown){
+    val more=line("Mostrar 80 productos más ("+(found.size-shown)+
+     " restantes)",14f,green,true).apply{
+     setPadding(d(12),d(13),d(12),d(13))
+     gravity=Gravity.CENTER
+     isClickable=true;isFocusable=true
+     setOnClickListener{shown+=80;render()}
+    }
+    list.addView(more)
+   }
+  }
+  search.addTextChangedListener(object:TextWatcher{
+   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){
+    shown=80;render()
+   }
+   override fun afterTextChanged(s:Editable?){}
+  })
+  filter.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
+   override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
+   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){
+    shown=80;render()
+   }
+  }
+  render()
+ }
+ private fun inventoryMovementsScreen(){
+  val report=try{StockReport.load(db.readableDatabase)}
+   catch(e:Exception){toast("No se pudo leer el Kárdex: "+e.message);return}
+  screen("Kárdex · Movimientos")
+  button("← Volver a existencias"){stockReportScreen()}
+  heading("Historial de movimientos",
+   "Ingresos por compras y salidas por ventas registrados en esta instalación.")
+  info("Importante sobre los saldos históricos",
+   "No es posible reconstruir saldos de movimientos antiguos. Los cambios manuales de stock o importaciones anteriores pueden no haber generado un movimiento.")
+  button("📄 Ver o imprimir PDF de inventario y movimientos"){stockPdfActions()}
+  button("📊 Exportar Excel con las dos hojas"){stockExcelDocument()}
+  label("Buscar movimientos")
+  val search=input("Nombre de producto, fecha o referencia")
+  val list=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+  body.addView(list,LinearLayout.LayoutParams(-1,-2))
+  var shown=80
+  fun render(){
+   list.removeAllViews()
+   val term=search.text.toString().trim()
+   val found=report.movements.filter{m->
+    term.isEmpty()||listOf(m.product,m.date,m.reason,m.type).any{
+     it.contains(term,ignoreCase=true)
+    }
+   }
+   list.addView(line(found.size.toString()+" movimientos registrados",13f,muted,true))
+   if(found.isEmpty()){
+    list.addView(line("No hay movimientos para mostrar.",13f,muted))
+    return
+   }
+   found.take(shown).forEach{m->
+    val entry=card()
+    entry.addView(line(m.product,14f,navy,true))
+    entry.addView(line(m.date+" · "+m.type+" · "+
+     (if(m.qty>0)"+" else "")+m.qty.toString()+" unidades",
+     13f,if(m.qty<0)Color.rgb(170,55,53) else green,true))
+    entry.addView(line(m.reason,12.5f,muted))
+    list.addView(entry,LinearLayout.LayoutParams(-1,-2).apply{
+     setMargins(0,d(5),0,d(5))
+    })
+   }
+   if(found.size>shown){
+    val more=line("Mostrar 80 movimientos más",14f,green,true).apply{
+     isClickable=true;isFocusable=true
+     gravity=Gravity.CENTER
+     setPadding(d(10),d(13),d(10),d(13))
+     setOnClickListener{shown+=80;render()}
+    }
+    list.addView(more)
+   }
+  }
+  search.addTextChangedListener(object:TextWatcher{
+   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){
+    shown=80;render()
+   }
+   override fun afterTextChanged(s:Editable?){}
+  })
+  render()
+ }
+ private fun stockTempPdf():java.io.File{
+  val dir=java.io.File(cacheDir,"shared_proformas")
+  if(!dir.isDirectory&&!dir.mkdirs())throw java.io.IOException(
+   "No se pudo crear carpeta de PDF.")
+  val file=java.io.File.createTempFile("BELSIPERU_STOCK_","_KARDEX.pdf",dir)
+  try{
+   val snapshot=StockReport.load(db.readableDatabase)
+   file.outputStream().use{output->
+    val c=companyInfo()
+    StockReport.writePdf(snapshot,c.legal,c.ruc,output)
+   }
+   if(file.length()<100L)throw java.io.IOException("PDF vacío")
+   return file
+  }catch(e:Exception){file.delete();throw e}
+ }
+ private fun stockPdfActions(){
+  Thread{
+   try{
+    val file=stockTempPdf()
+    runOnUiThread{
+     AlertDialog.Builder(this)
+      .setTitle("Reporte PDF de inventario")
+      .setMessage("Contiene existencias actuales y movimientos registrados. A4 horizontal, con varias páginas si hace falta.")
+      .setItems(arrayOf("Visualizar PDF","Imprimir PDF","Guardar PDF en el teléfono")){_,which->
+       when(which){
+        0->previewQuotePdf(file)
+        1->printQuotePdf(file,true)
+        2->stockPdfDocument()
+       }
+      }.setNegativeButton("Cerrar",null).show()
+    }
+   }catch(e:Exception){
+    runOnUiThread{toast("No se pudo generar PDF: "+(e.message?:"Error"))}
+   }
+  }.start()
+ }
+ private fun stockPdfDocument(){
+  val filename="BELSIPERU_REPORTE_STOCK_KARDEX_"+
+   SimpleDateFormat("yyyyMMdd",Locale.US).format(Date())+".pdf"
+  startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply{
+   addCategory(Intent.CATEGORY_OPENABLE)
+   type="application/pdf"
+   putExtra(Intent.EXTRA_TITLE,filename)
+  },97)
+ }
+ private fun stockExcelDocument(){
+  val filename="BELSIPERU_REPORTE_STOCK_KARDEX_"+
+   SimpleDateFormat("yyyyMMdd",Locale.US).format(Date())+".xlsx"
+  startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply{
+   addCategory(Intent.CATEGORY_OPENABLE)
+   type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+   putExtra(Intent.EXTRA_TITLE,filename)
+  },98)
+ }
+ private fun writeStockDocument(uri:Uri,pdf:Boolean){
+  Thread{
+   try{
+    val snapshot=StockReport.load(db.readableDatabase)
+    val output=contentResolver.openOutputStream(uri)
+     ?:throw java.io.IOException("No se pudo abrir el archivo de destino.")
+    output.use{stream->
+     if(pdf){
+      val c=companyInfo()
+      StockReport.writePdf(snapshot,c.legal,c.ruc,stream)
+     }else StockReport.writeExcel(snapshot,stream)
+    }
+    runOnUiThread{
+     toast((if(pdf)"PDF" else "Excel")+" guardado: "+
+      snapshot.products.size+" productos y "+
+      snapshot.movements.size+" movimientos.")
+    }
+   }catch(e:Exception){
+    runOnUiThread{toast("No se pudo guardar informe: "+(e.message?:"Error"))}
+   }
+  }.start()
+ }
  private fun selectPhoto(id:Long){
   pendingPhotoProduct=id
   val intent=Intent(Intent.ACTION_OPEN_DOCUMENT).apply{
@@ -3186,6 +3410,14 @@ class MainActivity:Activity() {
  @Deprecated("Legacy activity result used for minimal SDK example")
  override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){
   super.onActivityResult(requestCode,resultCode,data)
+  if(requestCode==97 && resultCode==RESULT_OK && data?.data!=null){
+   writeStockDocument(data.data!!,true)
+   return
+  }
+  if(requestCode==98 && resultCode==RESULT_OK && data?.data!=null){
+   writeStockDocument(data.data!!,false)
+   return
+  }
   if(requestCode==95 && resultCode==RESULT_OK && data?.data!=null){
    importCatalogExcel(data.data!!)
    return
