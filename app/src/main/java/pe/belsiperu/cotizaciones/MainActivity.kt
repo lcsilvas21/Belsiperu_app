@@ -3402,6 +3402,7 @@ class MainActivity:Activity() {
   if(multi){writePdfMultiple(id,out);return}
 
   if(pdfStyle=="Proforma BELSIPERU"){writePdfProforma(id,out);return}
+   val company=companyInfo()
   val c=db.readableDatabase.rawQuery("SELECT client,product,qty,unit_price,discount,igv,currency,total,created,product_photo,discount_amount FROM quotes WHERE id=?",arrayOf(id.toString()))
   if(!c.moveToFirst()){c.close();return}
   val size=when(pdfPaper){
@@ -3420,28 +3421,17 @@ class MainActivity:Activity() {
   val canvas=page.canvas;val p=Paint(3)
   val main=when(pdfStyle){"Corporativo"->Color.rgb(18,52,90);"Prémium"->Color.rgb(12,39,58);else->Color.rgb(18,52,90)}
   p.color=main;canvas.drawRect(0f,0f,w,if(compact)100f else 120f,p)
-  // Logo extraído del documento comercial de referencia.
-  if(!compact) {
-   try {
-    assets.open("belsiperu_logo.png").use { stream ->
-     val logo=BitmapFactory.decodeStream(stream)
-     if(logo!=null) {
-      canvas.drawBitmap(logo,null,RectF(w-margin-82f,12f,w-margin,91f),Paint(3))
-      logo.recycle()
-     }
-    }
-   }catch(_:Exception){}
-  }
+  if(!compact)drawCompanyLogo(canvas,RectF(w-margin-82f,12f,w-margin,91f))
   p.color=Color.WHITE;p.textSize=if(compact)17f else 24f;p.isFakeBoldText=true
-  canvas.drawText("BELSIPERU S.A.C.",margin,if(compact)33f else 48f,p)
+  canvas.drawText(company.legal.take(if(compact)18 else 35),margin,if(compact)33f else 48f,p)
   p.textSize=if(compact)9f else 12f;p.isFakeBoldText=false
-  canvas.drawText("RUC 20605060634",margin,if(compact)52f else 73f,p)
+  canvas.drawText("RUC "+company.ruc,margin,if(compact)52f else 73f,p)
   p.color=Color.rgb(213,165,74);p.textSize=if(compact)10f else 15f
   canvas.drawText("COT-${id.toString().padStart(6,'0')}",margin,if(compact)75f else 100f,p)
   // Marca de agua muy tenue.
   p.color=Color.argb(16,18,52,90);p.textSize=if(compact)29f else 65f;p.isFakeBoldText=true
   canvas.save();canvas.rotate(-25f,w/2,h/2)
-  canvas.drawText("BELSIPERU",margin,h/2,p);canvas.restore()
+  canvas.drawText(company.commercial.ifBlank{company.legal}.take(20),margin,h/2,p);canvas.restore()
   p.isFakeBoldText=false;p.color=main;p.textSize=if(compact)10f else 13f
   val top=if(compact)125f else 158f
   canvas.drawText("CLIENTE: ${c.getString(0).take(if(compact)25 else 52)}",margin,top,p)
@@ -3455,8 +3445,8 @@ class MainActivity:Activity() {
   val product=c.getString(1)
   canvas.drawText(product.take(if(compact)27 else 55),margin+8f,productY,p)
   canvas.drawText("Cantidad: ${c.getInt(2)}",margin+8f,productY+23f,p)
-  canvas.drawText("Precio unitario: ${c.getString(6)} ${"%.2f".format(Locale.US,c.getDouble(3))}",margin+8f,productY+44f,p)
-  canvas.drawText("Descuento: ${c.getDouble(4)} % + ${"%.2f".format(Locale.US,c.getDouble(10))}",margin+8f,productY+65f,p)
+  canvas.drawText("Precio unitario: ${c.getString(6)} ${pdfNumber(c.getDouble(3),company.decimals)}",margin+8f,productY+44f,p)
+  canvas.drawText("Descuento: ${c.getDouble(4)} % + ${pdfNumber(c.getDouble(10),company.decimals)}",margin+8f,productY+65f,p)
   canvas.drawText("IGV: ${if(c.getInt(5)==1)"18 %" else "No aplicado"}",margin+8f,productY+86f,p)
   val totalY=minOf(h-82f,productY+145f)
   val productPicture=loadQuoteProductBitmap(id)
@@ -3475,17 +3465,29 @@ class MainActivity:Activity() {
    productPicture.recycle()
   }
   p.color=main;p.textSize=if(compact)14f else 20f;p.isFakeBoldText=true
-  canvas.drawText("TOTAL ${c.getString(6)} ${"%.2f".format(Locale.US,c.getDouble(7))}",margin,totalY,p)
+  canvas.drawText("TOTAL ${c.getString(6)} ${pdfNumber(c.getDouble(7),company.decimals)}",margin,totalY,p)
   p.isFakeBoldText=false;p.textSize=if(compact)8f else 10f
+  val genericBanks=pdfTextLines(company.banks,w-margin*2,8.2f,300)
   if(!compact && h>560f) {
    p.color=main;p.textSize=9f;p.isFakeBoldText=false
-   canvas.drawText("CONDICIÓN DE PAGO: CONTADO",margin,h-145f,p)
-   canvas.drawText("Interbank soles: 20030088110506",margin,h-129f,p)
-   canvas.drawText("Interbank dólares: 2003008810513",margin,h-113f,p)
-   canvas.drawText("Entrega referencial: 48 horas para productos en stock, salvo venta previa.",margin,h-97f,p)
+   canvas.drawText("CONDICIÓN DE PAGO: "+pdfPayment,margin,h-165f,p)
+   genericBanks.take(3).forEachIndexed{i,value->
+    p.textSize=8.2f;canvas.drawText(value,margin,h-147f+i*13f,p)
+   }
+   pdfTextLines(company.footer,w-margin*2,8f,2).forEachIndexed{i,value->
+    p.textSize=8f;canvas.drawText(value,margin,h-88f+i*12f,p)
+   }
+  }else{
+   pdfTextLines(company.footer,w-margin*2,if(compact)6.8f else 8f,2).forEachIndexed{i,value->
+    p.color=main;p.textSize=if(compact)6.8f else 8f
+    canvas.drawText(value,margin,h-58f+i*10f,p)
+   }
   }
-  p.color=main;p.textSize=if(compact)8f else 10f
+p.color=main;p.textSize=if(compact)8f else 10f
   canvas.drawText("Proforma comercial - no es comprobante tributario.",margin,h-35f,p)
-  pdf.finishPage(page);pdf.writeTo(out);pdf.close();c.close()
+  pdf.finishPage(page)
+  addBankContinuationPages(pdf,genericBanks.drop(if(!compact && h>560f)3 else 0),
+   size.first,size.second)
+  pdf.writeTo(out);pdf.close();c.close()
  }
 }
