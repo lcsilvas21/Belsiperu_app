@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Símbolo de la identidad BELSIPERU, optimizado para el icono pequeño del teléfono. -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#063D9B"
+        android:strokeWidth="10"
+        android:strokeLineCap="round"
+        android:pathData="M73,35 C63,25 50,23 39,29 C22,37 20,55 29,69 C38,85 56,88 71,78 C79,72 82,63 81,55" />
+    <path
+        android:fillColor="#FCD000"
+        android:pathData="M17,80 C34,59 66,32 88,29 C67,40 41,66 17,80 Z" />
+    <path
+        android:fillColor="#05A65C"
+        android:pathData="M23,92 C41,63 68,44 91,42 C68,55 44,78 23,92 Z" />
+</vector>
