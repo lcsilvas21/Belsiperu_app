@@ -16,6 +16,9 @@ import android.widget.*
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.roundToInt
+import java.net.HttpURLConnection
+import java.net.URL
+import org.json.JSONObject
 
 class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,2) {
  override fun onCreate(db:SQLiteDatabase) {
@@ -265,8 +268,99 @@ class MainActivity:Activity() {
   screen("Configuración")
   heading("BELSIPERU V2","Diseño marino, verde y dorado")
   info("Protección del PIN","El PIN actual es de prototipo: no guardes información sensible ni real hasta reforzar la seguridad.",Color.rgb(169,105,19))
+  button("Configurar consulta de RUC"){rucSettings()}
   button("Bloquear aplicación"){lock()}
   button("Volver al inicio"){home()}
+ }
+ private fun rucSettings(){
+  screen("Consulta de RUC")
+  heading("Conexión a SUNAT mediante endpoint.pe",
+    "La app consulta un servicio privado. La clave de endpoint.pe debe permanecer en el servidor.")
+  val prefs=getSharedPreferences("ruc_service",MODE_PRIVATE)
+  label("URL del servidor (HTTPS)")
+  val base=input("https://mi-servicio.workers.dev")
+  base.setText(prefs.getString("proxy_url",""))
+  label("Código de acceso al servidor")
+  val secret=input("No es la clave de endpoint.pe")
+  secret.inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+  secret.setText(prefs.getString("proxy_access",""))
+  info("Importante","No pegues tu clave de endpoint.pe en la app ni en GitHub. Este código es diferente al del proveedor.",Color.rgb(169,105,19))
+  button("Guardar conexión"){
+   val url=base.text.toString().trim().trimEnd('/')
+   val code=secret.text.toString().trim()
+   val parsed=runCatching{Uri.parse(url)}.getOrNull()
+   if(parsed?.scheme!="https" || parsed.host.isNullOrBlank() || !parsed.userInfo.isNullOrBlank() ||
+      !parsed.query.isNullOrBlank() || !parsed.fragment.isNullOrBlank()){
+    toast("Ingresa una dirección HTTPS válida, sin claves ni parámetros.")
+   }else if(code.length<16){
+    toast("El código de acceso debe tener 16 caracteres o más.")
+   }else{
+    prefs.edit().putString("proxy_url",url).putString("proxy_access",code).apply()
+    toast("Conexión guardada")
+    clients()
+   }
+  }
+  button("Volver a Clientes"){clients()}
+ }
+ private data class RucDatos(val razon:String,val direccion:String,val estado:String,val condicion:String)
+ private fun consultaRuc(ruc:String,done:(RucDatos?,String?)->Unit){
+  val prefs=getSharedPreferences("ruc_service",MODE_PRIVATE)
+  val base=prefs.getString("proxy_url","")?.trim()?.trimEnd('/')?:""
+  val access=prefs.getString("proxy_access","")?:""
+  if(base.isBlank() || access.length<16){
+   done(null,"Configura primero el servidor RUC.");return
+  }
+  val parsed=runCatching{Uri.parse(base)}.getOrNull()
+  if(parsed?.scheme!="https" || parsed.host.isNullOrBlank() || !parsed.userInfo.isNullOrBlank()){
+   done(null,"La dirección de consulta debe usar HTTPS.");return
+  }
+  Thread{
+   var result:RucDatos?=null
+   var error:String?=null
+   var connection:HttpURLConnection?=null
+   try{
+    connection=URL(base+"/ruc/"+ruc).openConnection() as HttpURLConnection
+    connection.requestMethod="GET"
+    connection.connectTimeout=8000
+    connection.readTimeout=12000
+    connection.setRequestProperty("Accept","application/json")
+    connection.setRequestProperty("X-Belsiperu-Access",access)
+    connection.instanceFollowRedirects=false
+    val status=connection.responseCode
+    val stream=if(status in 200..299)connection.inputStream else connection.errorStream
+    val raw=stream?.bufferedReader(Charsets.UTF_8)?.use{it.readText()}?:""
+    if(status==200){
+     val obj=JSONObject(raw)
+     if(!obj.optBoolean("success",false)){
+      error=obj.optString("message","No se encontró información del RUC.")
+     }else{
+      val data=obj.optJSONObject("data")?:throw IllegalStateException("Respuesta incompleta.")
+      val legal=data.optString("razon_social","").trim()
+      if(legal.isBlank())throw IllegalStateException("No se recibió una razón social.")
+      val direction=data.optString("direccion_completa","").takeIf{it.isNotBlank()&&it!="null"}
+        ?:data.optString("direccion","")
+      result=RucDatos(legal,direction,data.optString("estado",""),data.optString("condicion",""))
+     }
+    }else{
+     error=when(status){
+      400,422->"El RUC no tiene un formato válido."
+      401,403->"El servidor de consulta no está autorizado."
+      402->"El proveedor no tiene créditos disponibles."
+      404->"Este RUC no figura en la consulta."
+      429->"Demasiadas consultas. Intenta más tarde."
+      in 500..599->"El servicio no está disponible temporalmente."
+      else->"No se pudo consultar el RUC. Código HTTP $status."
+     }
+    }
+   }catch(_:java.net.SocketTimeoutException){
+    error="La consulta tardó demasiado. Comprueba tu conexión."
+   }catch(_:java.net.UnknownHostException){
+    error="No se pudo encontrar el servidor de consulta."
+   }catch(_:Exception){
+    error="No fue posible realizar la consulta. Puedes ingresar el cliente manualmente."
+   }finally{connection?.disconnect()}
+   runOnUiThread{if(!isFinishing)done(result,error)}
+  }.start()
  }
  private fun products(){
   screen("Productos");button("← Inicio"){home()}
