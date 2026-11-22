@@ -1504,164 +1504,359 @@ class MainActivity:Activity() {
   button("Configurar consulta RUC / DNI"){rucSettings()}
  }
 
- private fun newQuote(){
-  screen("Nueva cotización");button("← Inicio"){home()}
-  val clients=mutableListOf("Cliente general")
-  val cc=db.readableDatabase.rawQuery("SELECT name FROM clients ORDER BY name",null)
-  try{while(cc.moveToNext())clients.add(cc.getString(0))}finally{cc.close()}
-  label("Cliente");val client=choice(clients)
-  val names=mutableListOf<String>()
-  val ids=mutableListOf<Long>()
-  val prices=mutableListOf<Double>()
-  val currencies=mutableListOf<String>()
-  val includedTax=mutableListOf<Boolean>()
-  val taxTypes=mutableListOf<String>()
-  val photos=mutableListOf<String?>()
-  val c=db.readableDatabase.rawQuery(
-   "SELECT id,name,price,currency,sale_includes_igv,tax_affectation,photo_uri FROM products ORDER BY name",null)
-  try{while(c.moveToNext()){
-   ids.add(c.getLong(0))
-   names.add(c.getString(1))
-   prices.add(c.getDouble(2))
-   currencies.add(c.getString(3)?:"PEN")
-   includedTax.add(c.getInt(4)==1)
-   taxTypes.add(c.getString(5)?:"GRAVADO")
-   photos.add(c.getString(6))
-  }}finally{c.close()}
-  if(names.isEmpty()){
-   label("Primero registra un producto o servicio.")
-   button("Ir al catálogo"){products()}
-   return
+ private data class CatalogQuoteProduct(
+  val id:Long,val code:String,val name:String,val price:Double,val currency:String,
+  val saleIncludesIgv:Boolean,val taxType:String,val photoUri:String?,val kind:String,
+  val unit:String,val barcode:String,val brand:String,val category:String,val stock:Int
+ )
+ private data class QuoteLineDraft(
+  val product:CatalogQuoteProduct,val quantity:Int,val netUnitPrice:Double,
+  val discountPct:Double,val discountAmount:Double,val applyIgv:Boolean,
+  val includePhoto:Boolean
+ )
+ private fun quoteLineNumbers(line:QuoteLineDraft,target:String,rate:Double):Pair<Double,Double>{
+  val factor=if(line.product.currency==target)1.0 else if(line.product.currency=="USD")rate else 1.0/rate
+  val base=(line.quantity*line.netUnitPrice*(1.0-line.discountPct/100.0)-line.discountAmount)
+   .coerceAtLeast(0.0)*factor
+  val taxable=line.product.taxType=="GRAVADO"&&line.applyIgv
+  return Pair(base,base*(if(taxable)1.18 else 1.0))
+ }
+ private fun newQuote(preselectedClientId:Long?=null){
+  screen("Nueva cotización")
+  button("← Inicio"){home()}
+  heading("Información del cliente","Busca un cliente ya registrado por nombre, RUC o DNI.")
+  label("Buscar cliente")
+  val clientSearch=input("Nombre, DNI o RUC")
+  val clientInfo=line("Selecciona un cliente de la lista para continuar.",13f,muted)
+  body.addView(clientInfo)
+  val clientResults=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+  body.addView(clientResults)
+  var selectedClientId:Long?=null
+  var selectedClientName=""
+  var changingClient=false
+  val customers=mutableListOf<Triple<Long,String,String>>()
+  val customerCursor=db.readableDatabase.rawQuery(
+   "SELECT id,name,document FROM clients ORDER BY name COLLATE NOCASE",null)
+  try{while(customerCursor.moveToNext()){
+   customers.add(Triple(customerCursor.getLong(0),customerCursor.getString(1)?:"",
+    customerCursor.getString(2)?:""))
+  }}finally{customerCursor.close()}
+  fun renderClientResults(){
+   clientResults.removeAllViews()
+   val query=clientSearch.text.toString().trim()
+   if(query.isBlank()){
+    clientResults.addView(line("Escribe un nombre o documento para buscar entre tus clientes.",12f,muted))
+    return
+   }
+   val found=customers.filter{it.second.contains(query,ignoreCase=true)||it.third.contains(query)}
+   if(found.isEmpty()){
+    clientResults.addView(line("No hay clientes que coincidan. Puedes registrar uno nuevo.",13f,muted))
+   }
+   for(item in found.take(15)){
+    val row=line(item.second+"  ·  "+item.third,14f,navy,true).apply{
+     setPadding(d(12),d(12),d(12),d(12))
+     background=round(Color.WHITE,12,border)
+     isClickable=true;isFocusable=true
+     setOnClickListener{
+      selectedClientId=item.first
+      selectedClientName=item.second
+      changingClient=true
+      clientSearch.setText(item.second)
+      changingClient=false
+      clientInfo.text="Cliente seleccionado: "+item.second+
+       (if(item.third.isNotBlank())" · "+item.third else "")
+      clientInfo.setTextColor(green)
+      clientResults.removeAllViews()
+     }
+    }
+    clientResults.addView(row,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(3),0,d(3))})
+   }
+   if(found.size>15)clientResults.addView(line(
+    "Hay "+found.size+" coincidencias. Escribe más letras para filtrar.",12f,muted))
   }
-  label("Producto o servicio");val product=choice(names)
-  label("Fotografía en la proforma")
-  val photoMode=choice(listOf("Con fotografía del producto","Sin fotografía del producto"))
-  val photoPreview=ImageView(this).apply{
-   background=round(Color.WHITE,12,border)
-   contentDescription="Vista previa de la fotografía que se incluirá en la proforma"
-   setPadding(d(7),d(7),d(7),d(7))
-  }
-  body.addView(photoPreview,LinearLayout.LayoutParams(-1,d(120)).apply{setMargins(0,d(4),0,d(5))})
-  val photoNote=line("",12f,muted)
-  body.addView(photoNote)
-  fun updatePhotoChoice(){
-   val i=product.selectedItemPosition
-   val include=photoMode.selectedItemPosition==0
-   val uri=photos.getOrNull(i)
-   if(!include){
-    photoPreview.visibility=View.GONE
-    photoNote.text="La proforma se generará SIN fotografía, aunque el producto tenga una foto en el catálogo."
-   }else if(uri.isNullOrBlank()){
-    photoPreview.visibility=View.GONE
-    photoNote.text="Este producto aún no tiene fotografía. Añádela desde Productos o elige 'Sin fotografía'."
-   }else{
-    photoPreview.visibility=View.VISIBLE
-    showProductImage(photoPreview,uri)
-    photoNote.text="La fotografía del catálogo se incluirá en la proforma PDF."
+  clientSearch.addTextChangedListener(object:TextWatcher{
+   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){
+    if(!changingClient){
+     selectedClientId=null;selectedClientName=""
+     clientInfo.text="Elige un cliente de los resultados."
+     clientInfo.setTextColor(muted)
+     renderClientResults()
+    }
+   }
+   override fun afterTextChanged(s:Editable?){}
+  })
+  preselectedClientId?.let{id->
+   customers.firstOrNull{it.first==id}?.let{saved->
+    changingClient=true
+    clientSearch.setText(saved.second)
+    changingClient=false
+    selectedClientId=saved.first;selectedClientName=saved.second
+    clientInfo.text="Cliente seleccionado: "+saved.second+
+     (if(saved.third.isNotBlank())" · "+saved.third else "")
+    clientInfo.setTextColor(green)
    }
   }
-  label("Variante de precio")
-  val priceOptions=mutableListOf("Precio de venta")
-  val variantPrices=mutableListOf<Double>()
-  val priceAdapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,priceOptions)
-  val variantChoice=Spinner(this).apply{adapter=priceAdapter}
-  body.addView(variantChoice)
-  val qty=input("Cantidad",true)
-  val price=input("Precio unitario sin IGV (editable)",true)
-  val discount=input("Descuento en %",true)
-  val fixedDiscount=input("Descuento adicional en monto",true)
-  label("Moneda de cotización")
+  renderClientResults()
+  button("＋ Registrar cliente nuevo"){clientEditor(returnToQuote=true)}
+
+  heading("Productos de la cotización","Busca por nombre, código, marca o código de barras y agrégalos a la proforma.")
+  label("Moneda de la cotización")
   val currency=choice(listOf("PEN","USD"))
-  val fx=input("Tipo de cambio: soles por dólar",true);fx.setText("3.75")
-  val igv=CheckBox(this).apply{text="Aplicar IGV 18 % al precio sin IGV";isChecked=false}
-  body.addView(igv)
-  val taxNote=line("",12f,muted)
-  body.addView(taxNote)
-  fun updateQuotePrice(){
-   val index=product.selectedItemPosition
-   if(index !in ids.indices)return
-   val priceSelected=if(variantChoice.selectedItemPosition==0)prices[index]
-    else variantPrices.getOrNull(variantChoice.selectedItemPosition-1)?:prices[index]
-   val net=if(includedTax[index]&&taxTypes[index]=="GRAVADO")priceSelected/1.18 else priceSelected
-   price.setText(String.format(Locale.US,"%.4f",net))
+  label("Tipo de cambio (S/ por US$)")
+  val fx=input("Ejemplo: 3.75",true)
+  fx.setText("3.75")
+  label("Buscar producto registrado")
+  val productSearch=input("Nombre, código, código de barras o marca")
+  val catalog=mutableListOf<CatalogQuoteProduct>()
+  val productCursor=db.readableDatabase.rawQuery(
+   "SELECT id,code,name,price,currency,sale_includes_igv,tax_affectation,photo_uri,kind,unit,barcode,brand,category,stock FROM products ORDER BY name COLLATE NOCASE",
+   null)
+  try{while(productCursor.moveToNext()){
+   catalog.add(CatalogQuoteProduct(
+    productCursor.getLong(0),productCursor.getString(1)?:"",productCursor.getString(2)?:"",
+    productCursor.getDouble(3),productCursor.getString(4)?:"PEN",
+    productCursor.getInt(5)==1,productCursor.getString(6)?:"GRAVADO",
+    productCursor.getString(7),productCursor.getString(8)?:"PRODUCTO",
+    productCursor.getString(9)?:"UNIDADES",productCursor.getString(10)?:"",
+    productCursor.getString(11)?:"",productCursor.getString(12)?:"",
+    productCursor.getInt(13)
+   ))
+  }}finally{productCursor.close()}
+  val picked=mutableListOf<QuoteLineDraft>()
+  val selectedList=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+  val totalView=line("Total: S/ 0.00",20f,green,true)
+  val resultsList=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+  fun targetCurrency()=currency.selectedItem?.toString()?:"PEN"
+  fun currentRate()=fx.text.toString().toDoubleOrNull()?:0.0
+  fun money(value:Double)=String.format(Locale.US,"%,.2f",value)
+  fun refreshPicked(){
+   selectedList.removeAllViews()
+   val target=targetCurrency();val rate=currentRate()
+   var total=0.0
+   if(picked.isEmpty())selectedList.addView(line("Todavía no agregaste productos.",13f,muted))
+   for((i,line) in picked.withIndex()){
+    val subtotal=if(rate>0)quoteLineNumbers(line,target,rate).second else 0.0
+    total+=subtotal
+    val entry=card()
+    entry.addView(line(line.product.name,15f,navy,true))
+    entry.addView(line(
+     line.quantity.toString()+" "+line.product.unit+" × "+line.product.currency+" "+
+     money(line.netUnitPrice)+" · Desc. "+money(line.discountPct)+" %",12f,muted))
+    entry.addView(line("Total: "+target+" "+money(subtotal),14f,green,true))
+    val remove=line("Quitar",13f,Color.rgb(162,45,38),true).apply{
+     setPadding(d(8),d(9),d(8),d(9))
+     isClickable=true;isFocusable=true
+     setOnClickListener{picked.removeAt(i);refreshPicked()}
+    }
+    entry.addView(remove)
+    selectedList.addView(entry,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(5),0,d(7))})
+   }
+   totalView.text="TOTAL "+target+" "+money(total)
   }
-  fun updateQuoteProduct(){
-   val index=product.selectedItemPosition
-   if(index !in ids.indices)return
-   priceOptions.clear();priceOptions.add("Precio de venta")
-   variantPrices.clear()
-   val cr=db.readableDatabase.rawQuery(
+  fun openProduct(product:CatalogQuoteProduct){
+   val form=LinearLayout(this).apply{
+    orientation=LinearLayout.VERTICAL;setPadding(d(15),d(6),d(15),d(6))
+   }
+   fun field(title:String,initial:String):EditText{
+    form.addView(line(title,13f,navy,true))
+    return EditText(this).apply{
+     hint=title;inputType=InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+     setSingleLine(true);setText(initial)
+     background=round(Color.WHITE,10,border)
+     setPadding(d(10),d(8),d(10),d(8))
+     form.addView(this,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(3),0,d(9))})
+    }
+   }
+   val variants=mutableListOf(Pair("Precio de venta",product.price))
+   val variantsCursor=db.readableDatabase.rawQuery(
     "SELECT label,price FROM product_price_variants WHERE product_id=? ORDER BY id",
-    arrayOf(ids[index].toString()))
-   try{while(cr.moveToNext()){
-    priceOptions.add(cr.getString(0)?:"Variante")
-    variantPrices.add(cr.getDouble(1))
-   }}finally{cr.close()}
-   priceAdapter.notifyDataSetChanged()
-   variantChoice.setSelection(0)
-   currency.setSelection(if(currencies[index]=="USD")1 else 0)
-   igv.isChecked=taxTypes[index]=="GRAVADO"
-   igv.isEnabled=taxTypes[index]=="GRAVADO"
-   taxNote.text=when(taxTypes[index]){
-    "EXONERADO"->"Producto exonerado del IGV según la ficha."
-    "INAFECTO"->"Producto inafecto al IGV según la ficha."
-    else->if(includedTax[index])"Precio del catálogo incluye IGV: se descontó el impuesto del valor editable." else
-      "Producto gravado: la aplicación calculará IGV 18 %."
+    arrayOf(product.id.toString()))
+   try{while(variantsCursor.moveToNext()){
+    variants.add(Pair(variantsCursor.getString(0)?:"Variante",variantsCursor.getDouble(1)))
+   }}finally{variantsCursor.close()}
+   form.addView(line("Tarifa del catálogo ("+product.currency+")",13f,navy,true))
+   val priceSpinner=Spinner(this).apply{
+    adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,
+     variants.map{it.first+" — "+money(it.second)})
    }
-   updateQuotePrice()
-   updatePhotoChoice()
-  }
-  variantChoice.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
-   override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
-   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){updateQuotePrice()}
-  }
-  photoMode.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
-   override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
-   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){updatePhotoChoice()}
-  }
-  product.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
-   override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
-   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){updateQuoteProduct()}
-  }
-  button("Guardar cotización"){
-   val i=product.selectedItemPosition
-   if(i !in ids.indices){toast("Selecciona un producto");return@button}
-   val includePhoto=photoMode.selectedItemPosition==0
-   if(includePhoto && photos.getOrNull(i).isNullOrBlank()){
-    toast("Este producto no tiene foto. Añádela en Productos o selecciona 'Sin fotografía'.")
-    return@button
+   form.addView(priceSpinner)
+   val qty=field("Cantidad", "1")
+   qty.inputType=InputType.TYPE_CLASS_NUMBER
+   val starting=if(product.saleIncludesIgv&&product.taxType=="GRAVADO")
+    product.price/1.18 else product.price
+   val price=field("Precio unitario sin IGV ("+product.currency+")",
+    String.format(Locale.US,"%.4f",starting))
+   priceSpinner.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
+    override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
+    override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){
+     val nominal=variants[position].second
+     val net=if(product.saleIncludesIgv&&product.taxType=="GRAVADO")nominal/1.18 else nominal
+     price.setText(String.format(Locale.US,"%.4f",net))
+    }
    }
-   val q=qty.text.toString().toIntOrNull()?:0
-   val rate=fx.text.toString().toDoubleOrNull()?:0.0
-   if(q<=0 || rate<=0){toast("Revisa cantidad y tipo de cambio");return@button}
-   val base=price.text.toString().toDoubleOrNull()
-   if(base==null || !base.isFinite() || base<0){toast("Indica un precio unitario válido");return@button}
-   val original=currencies[i];val target=currency.selectedItem.toString()
-   val converted=if(original==target)base else if(original=="USD")base*rate else base/rate
-   val d=(discount.text.toString().toDoubleOrNull()?:0.0).coerceIn(0.0,100.0)
-   val fixed=(fixedDiscount.text.toString().toDoubleOrNull()?:0.0).coerceAtLeast(0.0)
-   val subtotal=(q*converted*(1-d/100.0)-fixed).coerceAtLeast(0.0)
-   val taxable=taxTypes[i]=="GRAVADO" && igv.isChecked
-   val total=subtotal*(if(taxable)1.18 else 1.0)
-   if(!total.isFinite()){toast("El total de cotización no es válido");return@button}
-   val photo=if(includePhoto)photos[i] else null
-   val effectiveTax=if(taxable)"GRAVADO" else if(taxTypes[i]=="GRAVADO")"INAFECTO" else taxTypes[i]
+   val discount=field("Descuento (%)","0")
+   val amount=field("Descuento en monto ("+product.currency+")","0")
+   val applyIgv=CheckBox(this).apply{
+    text="Aplicar IGV 18 %"
+    isChecked=product.taxType=="GRAVADO"
+    isEnabled=product.taxType=="GRAVADO"
+   }
+   form.addView(applyIgv)
+   if(product.taxType!="GRAVADO")
+    form.addView(line("Afectación: "+product.taxType+". No se aplicará IGV.",12f,muted))
+   val photo=CheckBox(this).apply{
+    text="Incluir fotografía del catálogo en el PDF"
+    isChecked=!product.photoUri.isNullOrBlank()
+    isEnabled=!product.photoUri.isNullOrBlank()
+   }
+   form.addView(photo)
+   if(product.photoUri.isNullOrBlank())form.addView(line(
+    "Producto sin foto registrada; se puede cotizar sin fotografía.",12f,muted))
+   val scroll=ScrollView(this).apply{addView(form)}
+   val dialog=AlertDialog.Builder(this)
+    .setTitle("Agregar "+product.name)
+    .setView(scroll).setNegativeButton("Cancelar",null)
+    .setPositiveButton("Agregar",null).create()
+   dialog.setOnShowListener{
+    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener{
+     val quantity=qty.text.toString().toIntOrNull()
+     val unitPrice=price.text.toString().toDoubleOrNull()
+     val pct=discount.text.toString().toDoubleOrNull()
+     val fixed=amount.text.toString().toDoubleOrNull()
+     if(quantity==null||quantity<=0||unitPrice==null||!unitPrice.isFinite()||unitPrice<0||
+       pct==null||!pct.isFinite()||pct !in 0.0..100.0||
+       fixed==null||!fixed.isFinite()||fixed<0){
+      toast("Comprueba cantidad, precio y descuentos.")
+     }else{
+      picked.add(QuoteLineDraft(product,quantity,unitPrice,pct,fixed,
+       applyIgv.isChecked,photo.isChecked))
+      refreshPicked()
+      dialog.dismiss()
+      toast("Producto añadido a la cotización")
+     }
+    }
+   }
+   dialog.show()
+  }
+  fun renderProducts(){
+   resultsList.removeAllViews()
+   val query=productSearch.text.toString().trim()
+   val filtered=if(query.isBlank())catalog else catalog.filter{
+    listOf(it.name,it.code,it.barcode,it.brand,it.category)
+     .any{field->field.contains(query,ignoreCase=true)}
+   }
+   if(filtered.isEmpty()){
+    resultsList.addView(line("No se encontraron productos. Regístralos en el catálogo.",13f,muted))
+   }
+   for(product in filtered.take(24)){
+    val row=card()
+    val horizontal=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL}
+    val photo=ImageView(this).apply{contentDescription="Fotografía de "+product.name}
+    showProductImage(photo,product.photoUri)
+    horizontal.addView(photo,LinearLayout.LayoutParams(d(55),d(55)))
+    val detail=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(d(9),0,0,0)}
+    detail.addView(line(product.name,14f,navy,true))
+    detail.addView(line(product.code+
+     (if(product.barcode.isNotBlank())" · "+product.barcode else "")+
+     " · "+product.currency+" "+money(product.price),12f,muted))
+    detail.addView(line(if(product.kind=="SERVICIO")"Servicio" else
+     "Stock: "+product.stock+" "+product.unit,12f,muted))
+    horizontal.addView(detail,LinearLayout.LayoutParams(0,-2,1f))
+    row.addView(horizontal)
+    val add=line("＋ Agregar producto",13f,green,true).apply{
+     gravity=Gravity.CENTER;minHeight=d(43)
+     isClickable=true;isFocusable=true
+     setOnClickListener{openProduct(product)}
+    }
+    row.addView(add)
+    resultsList.addView(row,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(4),0,d(6))})
+   }
+   if(filtered.size>24)resultsList.addView(line(
+    "Hay "+filtered.size+" productos. Escribe más para encontrar el que buscas.",12f,muted))
+  }
+  productSearch.addTextChangedListener(object:TextWatcher{
+   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){renderProducts()}
+   override fun afterTextChanged(s:Editable?){}
+  })
+  currency.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
+   override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
+   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){refreshPicked()}
+  }
+  fx.addTextChangedListener(object:TextWatcher{
+   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){refreshPicked()}
+   override fun afterTextChanged(s:Editable?){}
+  })
+  if(catalog.isEmpty())button("Ir al catálogo de productos"){products()}
+  renderProducts()
+  heading("Productos agregados")
+  body.addView(selectedList)
+  body.addView(totalView,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(10),0,d(10))})
+  refreshPicked()
+
+  button("✓ Guardar cotización"){
+   val clientId=selectedClientId
+   if(clientId==null){toast("Selecciona un cliente registrado o crea uno nuevo.");return@button}
+   if(picked.isEmpty()){toast("Agrega al menos un producto del catálogo.");return@button}
+   val rate=currentRate();val target=targetCurrency()
+   if(rate<=0.0||!rate.isFinite()){toast("Indica un tipo de cambio válido.");return@button}
+   val customer=db.readableDatabase.rawQuery(
+    "SELECT name FROM clients WHERE id=?",arrayOf(clientId.toString()))
+   val customerName=try{if(customer.moveToFirst())customer.getString(0) else null}
+    finally{customer.close()}
+   if(customerName.isNullOrBlank()){toast("El cliente ya no está registrado.");return@button}
+   val calculated=picked.map{quoteLineNumbers(it,target,rate)}
+   val total=calculated.sumOf{it.second}
+   if(!total.isFinite()||total<0){toast("Revisa las cantidades y los descuentos.");return@button}
+   val first=picked.first()
+   val firstFactor=if(first.product.currency==target)1.0 else
+    if(first.product.currency=="USD")rate else 1.0/rate
+   val firstTaxable=first.product.taxType=="GRAVADO"&&first.applyIgv
+   val firstTax=if(firstTaxable)"GRAVADO" else
+    if(first.product.taxType=="GRAVADO")"INAFECTO" else first.product.taxType
    val values=android.content.ContentValues().apply{
-    put("client",client.selectedItem.toString());put("product",names[i])
-    put("product_id",ids[i]);put("qty",q);put("unit_price",converted)
-    put("discount",d);put("igv",if(taxable)1 else 0)
-    put("tax_affectation",effectiveTax)
+    put("client_id",clientId);put("client",customerName);put("product",first.product.name)
+    put("product_id",first.product.id);put("qty",first.quantity)
+    put("unit_price",first.netUnitPrice*firstFactor)
+    put("discount",first.discountPct);put("discount_amount",first.discountAmount*firstFactor)
+    put("igv",if(firstTaxable)1 else 0);put("tax_affectation",firstTax)
     put("currency",target);put("total",total)
     put("status","PENDIENTE");put("created",today())
-    put("product_photo",photo);put("include_product_photo",if(includePhoto)1 else 0)
-    put("discount_amount",fixed)
+    put("product_photo",if(first.includePhoto)first.product.photoUri else null)
+    put("include_product_photo",if(first.includePhoto)1 else 0)
    }
-   val id=db.writableDatabase.insert("quotes",null,values)
-   if(id<1){toast("No se pudo guardar la cotización");return@button}
-   toast("Cotización COT-"+id.toString().padStart(6,'0')+" guardada")
+   val database=db.writableDatabase
+   var createdId=-1L;var error:String?=null
+   try{
+    database.beginTransaction()
+    createdId=database.insertOrThrow("quotes",null,values)
+    picked.forEachIndexed{index,item->
+     val factor=if(item.product.currency==target)1.0 else
+      if(item.product.currency=="USD")rate else 1.0/rate
+     val applyTax=item.product.taxType=="GRAVADO"&&item.applyIgv
+     val taxType=if(applyTax)"GRAVADO" else
+      if(item.product.taxType=="GRAVADO")"INAFECTO" else item.product.taxType
+     database.insertOrThrow("quote_items",null,android.content.ContentValues().apply{
+      put("quote_id",createdId);put("product_id",item.product.id)
+      put("code",item.product.code);put("name",item.product.name);put("unit",item.product.unit)
+      put("qty",item.quantity);put("unit_price",item.netUnitPrice*factor)
+      put("discount_pct",item.discountPct);put("discount_amount",item.discountAmount*factor)
+      put("igv",if(applyTax)1 else 0);put("tax_affectation",taxType)
+      put("line_total",calculated[index].second)
+      put("photo_uri",if(item.includePhoto)item.product.photoUri else null)
+      put("include_product_photo",if(item.includePhoto)1 else 0)
+     })
+    }
+    database.setTransactionSuccessful()
+   }catch(e:Exception){error=e.message?:"Error al guardar cotización"}
+   finally{if(database.inTransaction())database.endTransaction()}
+   if(error!=null){toast("No se pudo guardar la cotización: "+error);return@button}
+   toast("Cotización COT-"+createdId.toString().padStart(6,'0')+" guardada")
    quotes()
   }
-  label("Esta versión de desarrollo permite una línea por cotización. Las variantes se aplican al precio unitario.")
+  label("Las cotizaciones se guardan al pulsar el botón. Las consultas y selecciones no modifican el inventario.")
  }
  private fun quotes(){
   screen("Cotizaciones");button("← Inicio"){home()}
