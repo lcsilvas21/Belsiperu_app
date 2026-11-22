@@ -656,7 +656,9 @@ class MainActivity:Activity() {
   info("Ventas confirmadas",sold.toString()+" operaciones")
   info("Unidades en stock",units.toString()+" unidades")
   info("Productos con stock bajo",low.toString()+" alertas",if(low>0)Color.rgb(169,105,19) else green)
-  info("Pendiente","Rentabilidad y exportación a Excel se añadirán después.")
+  button("📦 Inventario: listado, PDF y Excel"){stockReportScreen()}
+  button("📋 Kárdex: movimientos registrados"){inventoryMovementsScreen()}
+  info("Próximamente","Los reportes de rentabilidad se incorporarán más adelante.")
  }
  private fun settings(){
   screen("Configuración")
@@ -2912,14 +2914,7 @@ class MainActivity:Activity() {
  }
 
  private fun inventory(){
-  screen("Kardex / Stock");button("← Inicio"){home()}
-  val c=db.readableDatabase.rawQuery("SELECT name,stock,min_stock FROM products WHERE kind='PRODUCTO' ORDER BY name",null)
-  while(c.moveToNext()){val s=c.getInt(1);val m=c.getInt(2);label("${c.getString(0)}: $s unidades ${if(s<=m)"⚠ REPOSICIÓN SUGERIDA: ${m-s}" else ""}")}
-  c.close()
-  label("Últimos movimientos")
-  val moves=db.readableDatabase.rawQuery("SELECT product,qty,reason,created FROM movements ORDER BY id DESC LIMIT 30",null)
-  while(moves.moveToNext())label("${moves.getString(3)} • ${moves.getString(0)} • ${moves.getInt(1)} • ${moves.getString(2)}")
-  moves.close()
+  stockReportScreen()
  }
  private fun selectPhoto(id:Long){
   pendingPhotoProduct=id
@@ -3075,7 +3070,7 @@ class MainActivity:Activity() {
    if(email)"Enviar proforma por correo" else "Compartir PDF por WhatsApp / Otros"))}
   catch(e:Exception){toast("No se pudo compartir: "+(e.message?:""))}
  }
- private fun printQuotePdf(file:java.io.File){
+ private fun printQuotePdf(file:java.io.File,stockA4Landscape:Boolean=false){
   val manager=getSystemService(Context.PRINT_SERVICE) as android.print.PrintManager
   val adapter=object:android.print.PrintDocumentAdapter(){
    override fun onLayout(oldAttributes:android.print.PrintAttributes?,
@@ -3107,12 +3102,16 @@ class MainActivity:Activity() {
     }catch(e:Exception){callback.onWriteFailed(e.message?:"No se pudo imprimir")}
    }
   }
-  val media=when(pdfPaper){
-   "A4 vertical","A4 horizontal"->android.print.PrintAttributes.MediaSize.ISO_A4
-   "A5 vertical","A5 horizontal"->android.print.PrintAttributes.MediaSize.ISO_A5
+  val media=when{
+   stockA4Landscape->android.print.PrintAttributes.MediaSize.ISO_A4
+   pdfPaper=="A4 vertical"||pdfPaper=="A4 horizontal"->
+    android.print.PrintAttributes.MediaSize.ISO_A4
+   pdfPaper=="A5 vertical"||pdfPaper=="A5 horizontal"->
+    android.print.PrintAttributes.MediaSize.ISO_A5
    else->android.print.PrintAttributes.MediaSize.NA_LETTER
   }
-  val oriented=if(pdfPaper.endsWith("horizontal"))media.asLandscape() else media.asPortrait()
+  val oriented=if(stockA4Landscape||pdfPaper.endsWith("horizontal"))
+   media.asLandscape() else media.asPortrait()
   val attrs=android.print.PrintAttributes.Builder().setMediaSize(oriented).build()
   try{manager.print("Proforma BELSIPERU "+file.name,adapter,attrs)}
   catch(e:Exception){toast("Error al abrir impresión: "+(e.message?:""))}
