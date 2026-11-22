@@ -487,6 +487,12 @@ class MainActivity:Activity() {
    val pdf=android.graphics.pdf.PdfDocument()
    val page=pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(612,792,1).create())
    val canvas=page.canvas
+   // Centrado horizontal de la proforma sobre papel de 612 puntos.
+   // La tabla ocupa 15.05..544.62 en el diseño original: el desplazamiento
+   // deja ~41.2 puntos de margen a ambos lados de la página.
+   val horizontalOffset=(612f-(15.05f+544.62f))/2f
+   canvas.save()
+   canvas.translate(horizontalOffset,0f)
    val p=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=Color.BLACK;typeface=Typeface.DEFAULT}
    fun font(size:Float,bold:Boolean=false,color:Int=Color.BLACK){
     p.textSize=size;p.color=color;p.style=Paint.Style.FILL
@@ -685,6 +691,7 @@ class MainActivity:Activity() {
    center("Los productos en Stock, la entrega será realizada dentro de las 48 Horas, salvo venta Previa.",15.05f,544.62f,710f,9.4f)
    center("BELSIPERU",15.05f,544.62f,753f,11.3f,true)
    center("Proforma comercial emitida mediante BELSIPERU. No constituye comprobante de pago electrónico.",15.05f,544.62f,766f,7.5f)
+   canvas.restore()
    pdf.finishPage(page)
    try{pdf.writeTo(out)}finally{pdf.close()}
   }finally{c.close()}
