@@ -117,6 +117,7 @@ class MainActivity:Activity() {
  private val muted=Color.rgb(103,119,130)
  private val border=Color.rgb(225,233,235)
  private var pendingPdf:Long?=null
+ private var pendingCatalogExportTemplate=false
  private var pendingPhotoProduct:Long?=null
  private var pendingDraftPhotoUri:String?=null
  private var draftPhotoPreview:ImageView?=null
@@ -1062,6 +1063,9 @@ class MainActivity:Activity() {
  private fun products(){
   screen("Catálogo")
   button("＋ Nuevo producto"){productEditor()}
+  button("⬇ Importar productos desde Excel (.xlsx)"){selectCatalogExcel()}
+  button("⬆ Exportar catálogo a Excel (.xlsx)"){exportCatalogExcel(false)}
+  button("▤ Descargar plantilla Excel (.xlsx)"){exportCatalogExcel(true)}
   heading("Productos y servicios","Busca, consulta fotos y edita las fichas guardadas.")
   label("Buscar en catálogo")
   val search=input("Nombre, código, marca, categoría o código de barras")
@@ -2983,6 +2987,14 @@ class MainActivity:Activity() {
  @Deprecated("Legacy activity result used for minimal SDK example")
  override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){
   super.onActivityResult(requestCode,resultCode,data)
+  if(requestCode==95 && resultCode==RESULT_OK && data?.data!=null){
+   importCatalogExcel(data.data!!)
+   return
+  }
+  if(requestCode==96 && resultCode==RESULT_OK && data?.data!=null){
+   writeCatalogExcel(data.data!!,pendingCatalogExportTemplate)
+   return
+  }
   if(requestCode==94 && resultCode==RESULT_OK && data?.data!=null){
    try{
     val uri=data.data!!
