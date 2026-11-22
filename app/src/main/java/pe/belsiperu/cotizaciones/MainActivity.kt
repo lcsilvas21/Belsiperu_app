@@ -24,15 +24,17 @@ import org.json.JSONObject
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
-class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,6) {
+class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,7) {
  override fun onCreate(db:SQLiteDatabase) {
   db.execSQL("CREATE TABLE products(id INTEGER PRIMARY KEY AUTOINCREMENT,code TEXT,name TEXT,price REAL,currency TEXT,stock INTEGER,min_stock INTEGER,photo_uri TEXT,kind TEXT NOT NULL DEFAULT 'PRODUCTO',barcode TEXT NOT NULL DEFAULT '',category TEXT NOT NULL DEFAULT '',brand TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT 'UNIDADES',purchase_price REAL NOT NULL DEFAULT 0,sale_includes_igv INTEGER NOT NULL DEFAULT 0,purchase_includes_igv INTEGER NOT NULL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'GRAVADO',isc_type TEXT NOT NULL DEFAULT 'NO APLICA',sunat_code TEXT NOT NULL DEFAULT '',icbper INTEGER NOT NULL DEFAULT 0,sell_without_stock INTEGER NOT NULL DEFAULT 0,weight REAL NOT NULL DEFAULT 0)")
   db.execSQL("CREATE TABLE product_price_variants(id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER NOT NULL,label TEXT NOT NULL,price REAL NOT NULL,FOREIGN KEY(product_id) REFERENCES products(id))")
   db.execSQL("CREATE TABLE clients(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,document TEXT,address TEXT,phone TEXT NOT NULL DEFAULT '',email TEXT NOT NULL DEFAULT '',notes TEXT NOT NULL DEFAULT '',is_supplier INTEGER NOT NULL DEFAULT 0,is_driver INTEGER NOT NULL DEFAULT 0,is_carrier INTEGER NOT NULL DEFAULT 0)")
   db.execSQL("CREATE TABLE client_addresses(id INTEGER PRIMARY KEY AUTOINCREMENT,client_id INTEGER NOT NULL,label TEXT NOT NULL DEFAULT 'Principal',address TEXT NOT NULL,ubigeo TEXT NOT NULL DEFAULT '',is_main INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(client_id) REFERENCES clients(id))")
   db.execSQL("CREATE INDEX idx_client_addresses_client ON client_addresses(client_id)")
-  db.execSQL("CREATE TABLE quotes(id INTEGER PRIMARY KEY AUTOINCREMENT,client TEXT,product TEXT,qty INTEGER,unit_price REAL,discount REAL,igv INTEGER,currency TEXT,total REAL,status TEXT,created TEXT,product_photo TEXT,discount_amount REAL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO',product_id INTEGER,include_product_photo INTEGER NOT NULL DEFAULT 1)")
+  db.execSQL("CREATE TABLE quotes(id INTEGER PRIMARY KEY AUTOINCREMENT,client TEXT,product TEXT,qty INTEGER,unit_price REAL,discount REAL,igv INTEGER,currency TEXT,total REAL,status TEXT,created TEXT,product_photo TEXT,discount_amount REAL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO',product_id INTEGER,include_product_photo INTEGER NOT NULL DEFAULT 1,client_id INTEGER)")
   db.execSQL("CREATE TABLE movements(id INTEGER PRIMARY KEY AUTOINCREMENT,product TEXT,qty INTEGER,reason TEXT,created TEXT)")
+  db.execSQL("CREATE TABLE quote_items(id INTEGER PRIMARY KEY AUTOINCREMENT,quote_id INTEGER NOT NULL,product_id INTEGER,code TEXT NOT NULL DEFAULT '',name TEXT NOT NULL,unit TEXT NOT NULL DEFAULT 'UNIDADES',qty INTEGER NOT NULL,unit_price REAL NOT NULL,discount_pct REAL NOT NULL DEFAULT 0,discount_amount REAL NOT NULL DEFAULT 0,igv INTEGER NOT NULL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO',line_total REAL NOT NULL,photo_uri TEXT,include_product_photo INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(quote_id) REFERENCES quotes(id))")
+  db.execSQL("CREATE INDEX idx_quote_items_quote ON quote_items(quote_id)")
  }
  override fun onUpgrade(db:SQLiteDatabase,oldVersion:Int,newVersion:Int) {
   if(oldVersion<2) {
@@ -80,6 +82,13 @@ class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,6) {
    db.execSQL("CREATE INDEX IF NOT EXISTS idx_client_addresses_client ON client_addresses(client_id)")
    // Las direcciones antes guardadas en clients.address quedan como direcciones principales.
    db.execSQL("INSERT INTO client_addresses(client_id,label,address,ubigeo,is_main) SELECT id,'Principal',address,'',1 FROM clients WHERE TRIM(COALESCE(address,''))<>''")
+  }
+  if(oldVersion<7){
+   db.execSQL("CREATE TABLE IF NOT EXISTS quote_items(id INTEGER PRIMARY KEY AUTOINCREMENT,quote_id INTEGER NOT NULL,product_id INTEGER,code TEXT NOT NULL DEFAULT '',name TEXT NOT NULL,unit TEXT NOT NULL DEFAULT 'UNIDADES',qty INTEGER NOT NULL,unit_price REAL NOT NULL,discount_pct REAL NOT NULL DEFAULT 0,discount_amount REAL NOT NULL DEFAULT 0,igv INTEGER NOT NULL DEFAULT 0,tax_affectation TEXT NOT NULL DEFAULT 'INAFECTO',line_total REAL NOT NULL,photo_uri TEXT,include_product_photo INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(quote_id) REFERENCES quotes(id))")
+   db.execSQL("CREATE INDEX IF NOT EXISTS idx_quote_items_quote ON quote_items(quote_id)")
+   db.execSQL("ALTER TABLE quotes ADD COLUMN client_id INTEGER")
+   // Los presupuestos antiguos tenían una sola línea; se conserva su detalle.
+   db.execSQL("INSERT INTO quote_items(quote_id,product_id,code,name,unit,qty,unit_price,discount_pct,discount_amount,igv,tax_affectation,line_total,photo_uri,include_product_photo) SELECT q.id,q.product_id,COALESCE((SELECT p.code FROM products p WHERE p.id=q.product_id),''),q.product,'UNIDADES',q.qty,q.unit_price,q.discount,q.discount_amount,q.igv,q.tax_affectation,q.total,q.product_photo,q.include_product_photo FROM quotes q")
   }
  }
 }
@@ -1188,7 +1197,7 @@ class MainActivity:Activity() {
   button("← Volver a clientes"){clients()}
  }
 
- private fun clientEditor(editId:Long?=null){
+ private fun clientEditor(editId:Long?=null,returnToQuote:Boolean=false){
   val saved=mutableMapOf<String,String>()
   if(editId!=null){
    val old=db.readableDatabase.rawQuery("SELECT * FROM clients WHERE id=?",arrayOf(editId.toString()))
@@ -1216,7 +1225,9 @@ class MainActivity:Activity() {
   }
   if(addresses.isNotEmpty()&&addresses.none{it.isMain})addresses[0].isMain=true
   screen(if(editId==null)"Nuevo cliente" else "Editar contacto")
-  button("← Volver a clientes"){clients()}
+  button(if(returnToQuote)"← Volver a cotización" else "← Volver a clientes"){
+   if(returnToQuote)newQuote() else clients()
+  }
   heading("Datos del contacto","Consulta DNI o RUC o completa los datos manualmente.")
   label("Número de documento")
   val doc=input("DNI (8) o RUC (11)")
@@ -1462,6 +1473,7 @@ class MainActivity:Activity() {
     put("is_carrier",if(carrier.isChecked)1 else 0)
    }
    var success=false
+   var savedClientId:Long?=null
    try{
     database.beginTransaction()
     val clientId=if(editId==null){
@@ -1480,240 +1492,493 @@ class MainActivity:Activity() {
       put("is_main",if(a.isMain || (index==0 && addresses.none{it.isMain}))1 else 0)
      })
     }
-    database.setTransactionSuccessful();success=true
+    database.setTransactionSuccessful();savedClientId=clientId;success=true
    }catch(e:Exception){
     toast("No se pudo guardar el cliente: "+(e.message?:"Error inesperado"))
    }finally{if(database.inTransaction())database.endTransaction()}
-   if(success){toast(if(editId==null)"Cliente registrado" else "Cliente actualizado");clients()}
+   if(success){
+    toast(if(editId==null)"Cliente registrado" else "Cliente actualizado")
+    if(returnToQuote)newQuote(savedClientId) else clients()
+   }
   }
   button("Configurar consulta RUC / DNI"){rucSettings()}
  }
 
- private fun newQuote(){
-  screen("Nueva cotización");button("← Inicio"){home()}
-  val clients=mutableListOf("Cliente general")
-  val cc=db.readableDatabase.rawQuery("SELECT name FROM clients ORDER BY name",null)
-  try{while(cc.moveToNext())clients.add(cc.getString(0))}finally{cc.close()}
-  label("Cliente");val client=choice(clients)
-  val names=mutableListOf<String>()
-  val ids=mutableListOf<Long>()
-  val prices=mutableListOf<Double>()
-  val currencies=mutableListOf<String>()
-  val includedTax=mutableListOf<Boolean>()
-  val taxTypes=mutableListOf<String>()
-  val photos=mutableListOf<String?>()
-  val c=db.readableDatabase.rawQuery(
-   "SELECT id,name,price,currency,sale_includes_igv,tax_affectation,photo_uri FROM products ORDER BY name",null)
-  try{while(c.moveToNext()){
-   ids.add(c.getLong(0))
-   names.add(c.getString(1))
-   prices.add(c.getDouble(2))
-   currencies.add(c.getString(3)?:"PEN")
-   includedTax.add(c.getInt(4)==1)
-   taxTypes.add(c.getString(5)?:"GRAVADO")
-   photos.add(c.getString(6))
-  }}finally{c.close()}
-  if(names.isEmpty()){
-   label("Primero registra un producto o servicio.")
-   button("Ir al catálogo"){products()}
-   return
+ private data class CatalogQuoteProduct(
+  val id:Long,val code:String,val name:String,val price:Double,val currency:String,
+  val saleIncludesIgv:Boolean,val taxType:String,val photoUri:String?,val kind:String,
+  val unit:String,val barcode:String,val brand:String,val category:String,val stock:Int
+ )
+ private data class QuoteLineDraft(
+  val product:CatalogQuoteProduct,val quantity:Int,val netUnitPrice:Double,
+  val discountPct:Double,val discountAmount:Double,val applyIgv:Boolean,
+  val includePhoto:Boolean
+ )
+ private fun quoteLineNumbers(line:QuoteLineDraft,target:String,rate:Double):Pair<Double,Double>{
+  val factor=if(line.product.currency==target)1.0 else if(line.product.currency=="USD")rate else 1.0/rate
+  val base=(line.quantity*line.netUnitPrice*(1.0-line.discountPct/100.0)-line.discountAmount)
+   .coerceAtLeast(0.0)*factor
+  val taxable=line.product.taxType=="GRAVADO"&&line.applyIgv
+  return Pair(base,base*(if(taxable)1.18 else 1.0))
+ }
+ private fun newQuote(preselectedClientId:Long?=null){
+  screen("Nueva cotización")
+  button("← Inicio"){home()}
+  heading("Información del cliente","Busca un cliente ya registrado por nombre, RUC o DNI.")
+  label("Buscar cliente")
+  val clientSearch=input("Nombre, DNI o RUC")
+  val clientInfo=line("Selecciona un cliente de la lista para continuar.",13f,muted)
+  body.addView(clientInfo)
+  val clientResults=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+  body.addView(clientResults)
+  var selectedClientId:Long?=null
+  var selectedClientName=""
+  var changingClient=false
+  val customers=mutableListOf<Triple<Long,String,String>>()
+  val customerCursor=db.readableDatabase.rawQuery(
+   "SELECT id,name,document FROM clients ORDER BY name COLLATE NOCASE",null)
+  try{while(customerCursor.moveToNext()){
+   customers.add(Triple(customerCursor.getLong(0),customerCursor.getString(1)?:"",
+    customerCursor.getString(2)?:""))
+  }}finally{customerCursor.close()}
+  fun renderClientResults(){
+   clientResults.removeAllViews()
+   val query=clientSearch.text.toString().trim()
+   if(query.isBlank()){
+    clientResults.addView(line("Escribe un nombre o documento para buscar entre tus clientes.",12f,muted))
+    return
+   }
+   val found=customers.filter{it.second.contains(query,ignoreCase=true)||it.third.contains(query)}
+   if(found.isEmpty()){
+    clientResults.addView(line("No hay clientes que coincidan. Puedes registrar uno nuevo.",13f,muted))
+   }
+   for(item in found.take(15)){
+    val row=line(item.second+"  ·  "+item.third,14f,navy,true).apply{
+     setPadding(d(12),d(12),d(12),d(12))
+     background=round(Color.WHITE,12,border)
+     isClickable=true;isFocusable=true
+     setOnClickListener{
+      selectedClientId=item.first
+      selectedClientName=item.second
+      changingClient=true
+      clientSearch.setText(item.second)
+      changingClient=false
+      clientInfo.text="Cliente seleccionado: "+item.second+
+       (if(item.third.isNotBlank())" · "+item.third else "")
+      clientInfo.setTextColor(green)
+      clientResults.removeAllViews()
+     }
+    }
+    clientResults.addView(row,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(3),0,d(3))})
+   }
+   if(found.size>15)clientResults.addView(line(
+    "Hay "+found.size+" coincidencias. Escribe más letras para filtrar.",12f,muted))
   }
-  label("Producto o servicio");val product=choice(names)
-  label("Fotografía en la proforma")
-  val photoMode=choice(listOf("Con fotografía del producto","Sin fotografía del producto"))
-  val photoPreview=ImageView(this).apply{
-   background=round(Color.WHITE,12,border)
-   contentDescription="Vista previa de la fotografía que se incluirá en la proforma"
-   setPadding(d(7),d(7),d(7),d(7))
-  }
-  body.addView(photoPreview,LinearLayout.LayoutParams(-1,d(120)).apply{setMargins(0,d(4),0,d(5))})
-  val photoNote=line("",12f,muted)
-  body.addView(photoNote)
-  fun updatePhotoChoice(){
-   val i=product.selectedItemPosition
-   val include=photoMode.selectedItemPosition==0
-   val uri=photos.getOrNull(i)
-   if(!include){
-    photoPreview.visibility=View.GONE
-    photoNote.text="La proforma se generará SIN fotografía, aunque el producto tenga una foto en el catálogo."
-   }else if(uri.isNullOrBlank()){
-    photoPreview.visibility=View.GONE
-    photoNote.text="Este producto aún no tiene fotografía. Añádela desde Productos o elige 'Sin fotografía'."
-   }else{
-    photoPreview.visibility=View.VISIBLE
-    showProductImage(photoPreview,uri)
-    photoNote.text="La fotografía del catálogo se incluirá en la proforma PDF."
+  clientSearch.addTextChangedListener(object:TextWatcher{
+   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){
+    if(!changingClient){
+     selectedClientId=null;selectedClientName=""
+     clientInfo.text="Elige un cliente de los resultados."
+     clientInfo.setTextColor(muted)
+     renderClientResults()
+    }
+   }
+   override fun afterTextChanged(s:Editable?){}
+  })
+  preselectedClientId?.let{id->
+   customers.firstOrNull{it.first==id}?.let{saved->
+    changingClient=true
+    clientSearch.setText(saved.second)
+    changingClient=false
+    selectedClientId=saved.first;selectedClientName=saved.second
+    clientInfo.text="Cliente seleccionado: "+saved.second+
+     (if(saved.third.isNotBlank())" · "+saved.third else "")
+    clientInfo.setTextColor(green)
    }
   }
-  label("Variante de precio")
-  val priceOptions=mutableListOf("Precio de venta")
-  val variantPrices=mutableListOf<Double>()
-  val priceAdapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,priceOptions)
-  val variantChoice=Spinner(this).apply{adapter=priceAdapter}
-  body.addView(variantChoice)
-  val qty=input("Cantidad",true)
-  val price=input("Precio unitario sin IGV (editable)",true)
-  val discount=input("Descuento en %",true)
-  val fixedDiscount=input("Descuento adicional en monto",true)
-  label("Moneda de cotización")
+  renderClientResults()
+  button("＋ Registrar cliente nuevo"){clientEditor(returnToQuote=true)}
+
+  heading("Productos de la cotización","Busca por nombre, código, marca o código de barras y agrégalos a la proforma.")
+  label("Moneda de la cotización")
   val currency=choice(listOf("PEN","USD"))
-  val fx=input("Tipo de cambio: soles por dólar",true);fx.setText("3.75")
-  val igv=CheckBox(this).apply{text="Aplicar IGV 18 % al precio sin IGV";isChecked=false}
-  body.addView(igv)
-  val taxNote=line("",12f,muted)
-  body.addView(taxNote)
-  fun updateQuotePrice(){
-   val index=product.selectedItemPosition
-   if(index !in ids.indices)return
-   val priceSelected=if(variantChoice.selectedItemPosition==0)prices[index]
-    else variantPrices.getOrNull(variantChoice.selectedItemPosition-1)?:prices[index]
-   val net=if(includedTax[index]&&taxTypes[index]=="GRAVADO")priceSelected/1.18 else priceSelected
-   price.setText(String.format(Locale.US,"%.4f",net))
+  label("Tipo de cambio (S/ por US$)")
+  val fx=input("Ejemplo: 3.75",true)
+  fx.setText("3.75")
+  label("Buscar producto registrado")
+  val productSearch=input("Nombre, código, código de barras o marca")
+  button("📷 Escanear código de barras"){scanBarcode(productSearch)}
+  val catalog=mutableListOf<CatalogQuoteProduct>()
+  val productCursor=db.readableDatabase.rawQuery(
+   "SELECT id,code,name,price,currency,sale_includes_igv,tax_affectation,photo_uri,kind,unit,barcode,brand,category,stock FROM products ORDER BY name COLLATE NOCASE",
+   null)
+  try{while(productCursor.moveToNext()){
+   catalog.add(CatalogQuoteProduct(
+    productCursor.getLong(0),productCursor.getString(1)?:"",productCursor.getString(2)?:"",
+    productCursor.getDouble(3),productCursor.getString(4)?:"PEN",
+    productCursor.getInt(5)==1,productCursor.getString(6)?:"GRAVADO",
+    productCursor.getString(7),productCursor.getString(8)?:"PRODUCTO",
+    productCursor.getString(9)?:"UNIDADES",productCursor.getString(10)?:"",
+    productCursor.getString(11)?:"",productCursor.getString(12)?:"",
+    productCursor.getInt(13)
+   ))
+  }}finally{productCursor.close()}
+  val picked=mutableListOf<QuoteLineDraft>()
+  val selectedList=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+  val totalView=line("Total: S/ 0.00",20f,green,true)
+  val resultsList=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+  fun targetCurrency()=currency.selectedItem?.toString()?:"PEN"
+  fun currentRate()=fx.text.toString().toDoubleOrNull()?:0.0
+  fun money(value:Double)=String.format(Locale.US,"%,.2f",value)
+  fun refreshPicked(){
+   selectedList.removeAllViews()
+   val target=targetCurrency();val rate=currentRate()
+   var total=0.0
+   if(picked.isEmpty())selectedList.addView(line("Todavía no agregaste productos.",13f,muted))
+   for((i,draft) in picked.withIndex()){
+    val subtotal=if(rate>0)quoteLineNumbers(draft,target,rate).second else 0.0
+    total+=subtotal
+    val entry=card()
+    entry.addView(line(draft.product.name,15f,navy,true))
+    entry.addView(line(
+     draft.quantity.toString()+" "+draft.product.unit+" × "+draft.product.currency+" "+
+     money(draft.netUnitPrice)+" · Desc. "+money(draft.discountPct)+" %",12f,muted))
+    entry.addView(line("Total: "+target+" "+money(subtotal),14f,green,true))
+    val remove=line("Quitar",13f,Color.rgb(162,45,38),true).apply{
+     setPadding(d(8),d(9),d(8),d(9))
+     isClickable=true;isFocusable=true
+     setOnClickListener{picked.removeAt(i);refreshPicked()}
+    }
+    entry.addView(remove)
+    selectedList.addView(entry,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(5),0,d(7))})
+   }
+   totalView.text="TOTAL "+target+" "+money(total)
   }
-  fun updateQuoteProduct(){
-   val index=product.selectedItemPosition
-   if(index !in ids.indices)return
-   priceOptions.clear();priceOptions.add("Precio de venta")
-   variantPrices.clear()
-   val cr=db.readableDatabase.rawQuery(
+  fun openProduct(product:CatalogQuoteProduct){
+   val form=LinearLayout(this).apply{
+    orientation=LinearLayout.VERTICAL;setPadding(d(15),d(6),d(15),d(6))
+   }
+   fun field(title:String,initial:String):EditText{
+    form.addView(line(title,13f,navy,true))
+    return EditText(this).apply{
+     hint=title;inputType=InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+     setSingleLine(true);setText(initial)
+     background=round(Color.WHITE,10,border)
+     setPadding(d(10),d(8),d(10),d(8))
+     form.addView(this,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(3),0,d(9))})
+    }
+   }
+   val variants=mutableListOf(Pair("Precio de venta",product.price))
+   val variantsCursor=db.readableDatabase.rawQuery(
     "SELECT label,price FROM product_price_variants WHERE product_id=? ORDER BY id",
-    arrayOf(ids[index].toString()))
-   try{while(cr.moveToNext()){
-    priceOptions.add(cr.getString(0)?:"Variante")
-    variantPrices.add(cr.getDouble(1))
-   }}finally{cr.close()}
-   priceAdapter.notifyDataSetChanged()
-   variantChoice.setSelection(0)
-   currency.setSelection(if(currencies[index]=="USD")1 else 0)
-   igv.isChecked=taxTypes[index]=="GRAVADO"
-   igv.isEnabled=taxTypes[index]=="GRAVADO"
-   taxNote.text=when(taxTypes[index]){
-    "EXONERADO"->"Producto exonerado del IGV según la ficha."
-    "INAFECTO"->"Producto inafecto al IGV según la ficha."
-    else->if(includedTax[index])"Precio del catálogo incluye IGV: se descontó el impuesto del valor editable." else
-      "Producto gravado: la aplicación calculará IGV 18 %."
+    arrayOf(product.id.toString()))
+   try{while(variantsCursor.moveToNext()){
+    variants.add(Pair(variantsCursor.getString(0)?:"Variante",variantsCursor.getDouble(1)))
+   }}finally{variantsCursor.close()}
+   form.addView(line("Tarifa del catálogo ("+product.currency+")",13f,navy,true))
+   val priceSpinner=Spinner(this).apply{
+    adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,
+     variants.map{it.first+" — "+money(it.second)})
    }
-   updateQuotePrice()
-   updatePhotoChoice()
-  }
-  variantChoice.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
-   override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
-   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){updateQuotePrice()}
-  }
-  photoMode.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
-   override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
-   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){updatePhotoChoice()}
-  }
-  product.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
-   override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
-   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){updateQuoteProduct()}
-  }
-  button("Guardar cotización"){
-   val i=product.selectedItemPosition
-   if(i !in ids.indices){toast("Selecciona un producto");return@button}
-   val includePhoto=photoMode.selectedItemPosition==0
-   if(includePhoto && photos.getOrNull(i).isNullOrBlank()){
-    toast("Este producto no tiene foto. Añádela en Productos o selecciona 'Sin fotografía'.")
-    return@button
+   form.addView(priceSpinner)
+   val qty=field("Cantidad", "1")
+   qty.inputType=InputType.TYPE_CLASS_NUMBER
+   val starting=if(product.saleIncludesIgv&&product.taxType=="GRAVADO")
+    product.price/1.18 else product.price
+   val price=field("Precio unitario sin IGV ("+product.currency+")",
+    String.format(Locale.US,"%.4f",starting))
+   priceSpinner.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
+    override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
+    override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){
+     val nominal=variants[position].second
+     val net=if(product.saleIncludesIgv&&product.taxType=="GRAVADO")nominal/1.18 else nominal
+     price.setText(String.format(Locale.US,"%.4f",net))
+    }
    }
-   val q=qty.text.toString().toIntOrNull()?:0
-   val rate=fx.text.toString().toDoubleOrNull()?:0.0
-   if(q<=0 || rate<=0){toast("Revisa cantidad y tipo de cambio");return@button}
-   val base=price.text.toString().toDoubleOrNull()
-   if(base==null || !base.isFinite() || base<0){toast("Indica un precio unitario válido");return@button}
-   val original=currencies[i];val target=currency.selectedItem.toString()
-   val converted=if(original==target)base else if(original=="USD")base*rate else base/rate
-   val d=(discount.text.toString().toDoubleOrNull()?:0.0).coerceIn(0.0,100.0)
-   val fixed=(fixedDiscount.text.toString().toDoubleOrNull()?:0.0).coerceAtLeast(0.0)
-   val subtotal=(q*converted*(1-d/100.0)-fixed).coerceAtLeast(0.0)
-   val taxable=taxTypes[i]=="GRAVADO" && igv.isChecked
-   val total=subtotal*(if(taxable)1.18 else 1.0)
-   if(!total.isFinite()){toast("El total de cotización no es válido");return@button}
-   val photo=if(includePhoto)photos[i] else null
-   val effectiveTax=if(taxable)"GRAVADO" else if(taxTypes[i]=="GRAVADO")"INAFECTO" else taxTypes[i]
+   val discount=field("Descuento (%)","0")
+   val amount=field("Descuento en monto ("+product.currency+")","0")
+   val applyIgv=CheckBox(this).apply{
+    text="Aplicar IGV 18 %"
+    isChecked=product.taxType=="GRAVADO"
+    isEnabled=product.taxType=="GRAVADO"
+   }
+   form.addView(applyIgv)
+   if(product.taxType!="GRAVADO")
+    form.addView(line("Afectación: "+product.taxType+". No se aplicará IGV.",12f,muted))
+   val photo=CheckBox(this).apply{
+    text="Incluir fotografía del catálogo en el PDF"
+    isChecked=!product.photoUri.isNullOrBlank()
+    isEnabled=!product.photoUri.isNullOrBlank()
+   }
+   form.addView(photo)
+   if(product.photoUri.isNullOrBlank())form.addView(line(
+    "Producto sin foto registrada; se puede cotizar sin fotografía.",12f,muted))
+   val scroll=ScrollView(this).apply{addView(form)}
+   val dialog=AlertDialog.Builder(this)
+    .setTitle("Agregar "+product.name)
+    .setView(scroll).setNegativeButton("Cancelar",null)
+    .setPositiveButton("Agregar",null).create()
+   dialog.setOnShowListener{
+    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener{
+     val quantity=qty.text.toString().toIntOrNull()
+     val unitPrice=price.text.toString().toDoubleOrNull()
+     val pct=discount.text.toString().toDoubleOrNull()
+     val fixed=amount.text.toString().toDoubleOrNull()
+     if(quantity==null||quantity<=0||unitPrice==null||!unitPrice.isFinite()||unitPrice<0||
+       pct==null||!pct.isFinite()||pct !in 0.0..100.0||
+       fixed==null||!fixed.isFinite()||fixed<0){
+      toast("Comprueba cantidad, precio y descuentos.")
+     }else{
+      picked.add(QuoteLineDraft(product,quantity,unitPrice,pct,fixed,
+       applyIgv.isChecked,photo.isChecked))
+      refreshPicked()
+      dialog.dismiss()
+      toast("Producto añadido a la cotización")
+     }
+    }
+   }
+   dialog.show()
+  }
+  fun renderProducts(){
+   resultsList.removeAllViews()
+   val query=productSearch.text.toString().trim()
+   val filtered=if(query.isBlank())catalog else catalog.filter{
+    listOf(it.name,it.code,it.barcode,it.brand,it.category)
+     .any{field->field.contains(query,ignoreCase=true)}
+   }
+   if(filtered.isEmpty()){
+    resultsList.addView(line("No se encontraron productos. Regístralos en el catálogo.",13f,muted))
+   }
+   for(product in filtered.take(24)){
+    val row=card()
+    val horizontal=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL}
+    val photo=ImageView(this).apply{contentDescription="Fotografía de "+product.name}
+    showProductImage(photo,product.photoUri)
+    horizontal.addView(photo,LinearLayout.LayoutParams(d(55),d(55)))
+    val detail=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(d(9),0,0,0)}
+    detail.addView(line(product.name,14f,navy,true))
+    detail.addView(line(product.code+
+     (if(product.barcode.isNotBlank())" · "+product.barcode else "")+
+     " · "+product.currency+" "+money(product.price),12f,muted))
+    detail.addView(line(if(product.kind=="SERVICIO")"Servicio" else
+     "Stock: "+product.stock+" "+product.unit,12f,muted))
+    horizontal.addView(detail,LinearLayout.LayoutParams(0,-2,1f))
+    row.addView(horizontal)
+    val add=line("＋ Agregar producto",13f,green,true).apply{
+     gravity=Gravity.CENTER;minHeight=d(43)
+     isClickable=true;isFocusable=true
+     setOnClickListener{openProduct(product)}
+    }
+    row.addView(add)
+    resultsList.addView(row,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(4),0,d(6))})
+   }
+   if(filtered.size>24)resultsList.addView(line(
+    "Hay "+filtered.size+" productos. Escribe más para encontrar el que buscas.",12f,muted))
+  }
+  productSearch.addTextChangedListener(object:TextWatcher{
+   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){renderProducts()}
+   override fun afterTextChanged(s:Editable?){}
+  })
+  currency.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
+   override fun onNothingSelected(p:android.widget.AdapterView<*>?){}
+   override fun onItemSelected(p:android.widget.AdapterView<*>?,v:View?,position:Int,id:Long){refreshPicked()}
+  }
+  fx.addTextChangedListener(object:TextWatcher{
+   override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
+   override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){refreshPicked()}
+   override fun afterTextChanged(s:Editable?){}
+  })
+  if(catalog.isEmpty())button("Ir al catálogo de productos"){products()}
+  renderProducts()
+  heading("Productos agregados")
+  body.addView(selectedList)
+  body.addView(totalView,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(10),0,d(10))})
+  refreshPicked()
+
+  button("✓ Guardar cotización"){
+   val clientId=selectedClientId
+   if(clientId==null){toast("Selecciona un cliente registrado o crea uno nuevo.");return@button}
+   if(picked.isEmpty()){toast("Agrega al menos un producto del catálogo.");return@button}
+   val rate=currentRate();val target=targetCurrency()
+   if(rate<=0.0||!rate.isFinite()){toast("Indica un tipo de cambio válido.");return@button}
+   val customer=db.readableDatabase.rawQuery(
+    "SELECT name FROM clients WHERE id=?",arrayOf(clientId.toString()))
+   val customerName=try{if(customer.moveToFirst())customer.getString(0) else null}
+    finally{customer.close()}
+   if(customerName.isNullOrBlank()){toast("El cliente ya no está registrado.");return@button}
+   val calculated=picked.map{quoteLineNumbers(it,target,rate)}
+   val total=calculated.sumOf{it.second}
+   if(!total.isFinite()||total<0){toast("Revisa las cantidades y los descuentos.");return@button}
+   val first=picked.first()
+   val firstFactor=if(first.product.currency==target)1.0 else
+    if(first.product.currency=="USD")rate else 1.0/rate
+   val firstTaxable=first.product.taxType=="GRAVADO"&&first.applyIgv
+   val firstTax=if(firstTaxable)"GRAVADO" else
+    if(first.product.taxType=="GRAVADO")"INAFECTO" else first.product.taxType
    val values=android.content.ContentValues().apply{
-    put("client",client.selectedItem.toString());put("product",names[i])
-    put("product_id",ids[i]);put("qty",q);put("unit_price",converted)
-    put("discount",d);put("igv",if(taxable)1 else 0)
-    put("tax_affectation",effectiveTax)
+    put("client_id",clientId);put("client",customerName);put("product",first.product.name)
+    put("product_id",first.product.id);put("qty",first.quantity)
+    put("unit_price",first.netUnitPrice*firstFactor)
+    put("discount",first.discountPct);put("discount_amount",first.discountAmount*firstFactor)
+    put("igv",if(firstTaxable)1 else 0);put("tax_affectation",firstTax)
     put("currency",target);put("total",total)
     put("status","PENDIENTE");put("created",today())
-    put("product_photo",photo);put("include_product_photo",if(includePhoto)1 else 0)
-    put("discount_amount",fixed)
+    put("product_photo",if(first.includePhoto)first.product.photoUri else null)
+    put("include_product_photo",if(first.includePhoto)1 else 0)
    }
-   val id=db.writableDatabase.insert("quotes",null,values)
-   if(id<1){toast("No se pudo guardar la cotización");return@button}
-   toast("Cotización COT-"+id.toString().padStart(6,'0')+" guardada")
+   val database=db.writableDatabase
+   var createdId=-1L;var error:String?=null
+   try{
+    database.beginTransaction()
+    createdId=database.insertOrThrow("quotes",null,values)
+    picked.forEachIndexed{index,item->
+     val factor=if(item.product.currency==target)1.0 else
+      if(item.product.currency=="USD")rate else 1.0/rate
+     val applyTax=item.product.taxType=="GRAVADO"&&item.applyIgv
+     val taxType=if(applyTax)"GRAVADO" else
+      if(item.product.taxType=="GRAVADO")"INAFECTO" else item.product.taxType
+     database.insertOrThrow("quote_items",null,android.content.ContentValues().apply{
+      put("quote_id",createdId);put("product_id",item.product.id)
+      put("code",item.product.code);put("name",item.product.name);put("unit",item.product.unit)
+      put("qty",item.quantity);put("unit_price",item.netUnitPrice*factor)
+      put("discount_pct",item.discountPct);put("discount_amount",item.discountAmount*factor)
+      put("igv",if(applyTax)1 else 0);put("tax_affectation",taxType)
+      put("line_total",calculated[index].second)
+      put("photo_uri",if(item.includePhoto)item.product.photoUri else null)
+      put("include_product_photo",if(item.includePhoto)1 else 0)
+     })
+    }
+    database.setTransactionSuccessful()
+   }catch(e:Exception){error=e.message?:"Error al guardar cotización"}
+   finally{if(database.inTransaction())database.endTransaction()}
+   if(error!=null){toast("No se pudo guardar la cotización: "+error);return@button}
+   toast("Cotización COT-"+createdId.toString().padStart(6,'0')+" guardada")
    quotes()
   }
-  label("Esta versión de desarrollo permite una línea por cotización. Las variantes se aplican al precio unitario.")
+  label("Las cotizaciones se guardan al pulsar el botón. Las consultas y selecciones no modifican el inventario.")
  }
  private fun quotes(){
-  screen("Cotizaciones");button("← Inicio"){home()}
-  val c=db.readableDatabase.rawQuery("SELECT id,client,product,qty,total,currency,status,include_product_photo FROM quotes ORDER BY id DESC",null)
+  screen("Cotizaciones")
+  button("＋ Nueva cotización"){newQuote()}
+  heading("Historial de cotizaciones","Consulta productos incluidos, exporta proformas y confirma ventas.")
+  val c=db.readableDatabase.rawQuery(
+   "SELECT id,client,total,currency,status FROM quotes ORDER BY id DESC",null)
   try{
    while(c.moveToNext()){
-    val id=c.getLong(0);val status=c.getString(6)
-    val photoLabel=if(c.getInt(7)==1)"Con foto" else "Sin foto"
-    label("COT-${id.toString().padStart(6,'0')} • $status • $photoLabel\n${c.getString(1)}\n${c.getInt(3)} × ${c.getString(2)}\n${c.getString(5)} ${"%.2f".format(Locale.US,c.getDouble(4))}")
-    button("Exportar PDF COT-${id}"){pdfOptions(id)}
-    if(status=="PENDIENTE")button("Confirmar venta COT-${id}"){confirm(id)}
+    val quoteId=c.getLong(0)
+    val client=c.getString(1)?:""
+    val total=c.getDouble(2)
+    val currency=c.getString(3)?:"PEN"
+    val status=c.getString(4)?:"PENDIENTE"
+    val cardView=card()
+    cardView.addView(line("COT-"+quoteId.toString().padStart(6,'0')+" · "+status,15f,navy,true))
+    cardView.addView(line(client,14f,ink))
+    var count=0;var withPhoto=false
+    val lines=db.readableDatabase.rawQuery(
+     "SELECT qty,name,include_product_photo FROM quote_items WHERE quote_id=? ORDER BY id",
+     arrayOf(quoteId.toString()))
+    try{while(lines.moveToNext()){
+     count++
+     if(count<=4)cardView.addView(line(
+      lines.getInt(0).toString()+" × "+(lines.getString(1)?:"Producto"),12f,muted))
+     if(lines.getInt(2)==1)withPhoto=true
+    }}finally{lines.close()}
+    if(count>4)cardView.addView(line("+"+(count-4)+" producto(s) más",12f,muted))
+    cardView.addView(line(currency+" "+String.format(Locale.US,"%,.2f",total)+
+     " · "+count+" producto(s)"+(if(withPhoto)" · Con fotos" else ""),
+     16f,green,true))
+    val export=line("Exportar PDF",14f,green,true).apply{
+     setPadding(d(8),d(12),d(8),d(12))
+     isClickable=true;isFocusable=true;setOnClickListener{pdfOptions(quoteId)}
+    }
+    cardView.addView(export)
+    if(status=="PENDIENTE"){
+     val sale=line("Confirmar venta",14f,green,true).apply{
+      setPadding(d(8),d(12),d(8),d(12))
+      isClickable=true;isFocusable=true;setOnClickListener{confirm(quoteId)}
+     }
+     cardView.addView(sale)
+    }
+    body.addView(cardView,LinearLayout.LayoutParams(-1,-2).apply{setMargins(0,d(6),0,d(8))})
    }
   }finally{c.close()}
  }
 
  private fun confirm(id:Long){
   AlertDialog.Builder(this).setTitle("Confirmar venta")
-   .setMessage("Se registrará la venta. Para productos físicos se revisará el stock y se descontará una sola vez.")
+   .setMessage("Se descontará el stock de todos los productos físicos de esta cotización una sola vez. ¿Continuar?")
    .setNegativeButton("Cancelar",null).setPositiveButton("Confirmar"){_,_->
     val database=db.writableDatabase
     var error:String?=null
-    database.beginTransaction()
     try{
-     val quote=database.rawQuery(
-      "SELECT product,qty,status,product_id FROM quotes WHERE id=?",
-      arrayOf(id.toString()))
-     var name="";var quantity=0;var pending=false;var productId:Long?=null
-     try{if(quote.moveToFirst()){
-      name=quote.getString(0)?:""
-      quantity=quote.getInt(1)
-      pending=quote.getString(2)=="PENDIENTE"
-      if(!quote.isNull(3))productId=quote.getLong(3)
-     }}finally{quote.close()}
-     if(!pending){error="Esta cotización ya fue confirmada o no existe."}
-     else{
-      val product=if(productId!=null){
-       database.rawQuery("SELECT id,kind,stock,sell_without_stock FROM products WHERE id=?",
-        arrayOf(productId.toString()))
-      }else{
-       database.rawQuery("SELECT id,kind,stock,sell_without_stock FROM products WHERE name=? ORDER BY id DESC LIMIT 1",
-        arrayOf(name))
+     database.beginTransaction()
+     val quote=database.rawQuery("SELECT status FROM quotes WHERE id=?",arrayOf(id.toString()))
+     val pending=try{quote.moveToFirst()&&quote.getString(0)=="PENDIENTE"}
+      finally{quote.close()}
+     if(!pending)throw IllegalStateException("La cotización ya fue confirmada o no existe.")
+     val requirements=mutableMapOf<Long,Int>()
+     val names=mutableMapOf<Long,String>()
+     val items=database.rawQuery(
+      "SELECT product_id,name,qty FROM quote_items WHERE quote_id=?",arrayOf(id.toString()))
+     var found=0
+     try{
+      while(items.moveToNext()){
+       found++
+       val name=items.getString(1)?:""
+       val qty=items.getInt(2)
+       if(qty<=0)throw IllegalStateException("La cotización contiene cantidades incorrectas.")
+       val source=if(!items.isNull(0))
+        database.rawQuery("SELECT id FROM products WHERE id=? LIMIT 1",
+         arrayOf(items.getLong(0).toString()))
+       else database.rawQuery(
+        "SELECT id FROM products WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(name))
+       val productId=try{if(source.moveToFirst())source.getLong(0) else null}
+        finally{source.close()}
+       if(productId==null)throw IllegalStateException(
+        "El producto "+name+" ya no está disponible en el catálogo.")
+       requirements[productId]=(requirements[productId]?:0)+qty
+       names[productId]=name
       }
-      var itemId:Long?=null;var kind="PRODUCTO";var available=0;var allowOversell=false
-      try{if(product.moveToFirst()){
-       itemId=product.getLong(0);kind=product.getString(1)?:"PRODUCTO"
-       available=product.getInt(2);allowOversell=product.getInt(3)==1
-      }}finally{product.close()}
-      if(itemId==null){error="El producto ya no existe en el catálogo."}
-      else if(kind=="SERVICIO"){
-       // Los servicios no deben descontar stock ni generar movimientos físicos.
-       database.execSQL("UPDATE quotes SET status='VENDIDA' WHERE id=?",arrayOf(id))
-      }else if(quantity>available && !allowOversell){
-       error="Stock insuficiente: hay "+available+" unidades. Activa 'Ventas sin stock' en el producto si corresponde."
-      }else{
-       database.execSQL("UPDATE products SET stock=stock-? WHERE id=?",arrayOf(quantity,itemId))
+     }finally{items.close()}
+     if(found==0)throw IllegalStateException("La cotización no tiene productos.")
+     // Verifica TODAS las cantidades antes de descontar cualquiera.
+     for((productId,qty) in requirements){
+      val product=database.rawQuery(
+       "SELECT kind,stock,sell_without_stock FROM products WHERE id=?",
+       arrayOf(productId.toString()))
+      try{
+       if(!product.moveToFirst())throw IllegalStateException("Producto no encontrado.")
+       val service=product.getString(0)=="SERVICIO"
+       val stock=product.getInt(1)
+       val allowOversell=product.getInt(2)==1
+       if(!service && qty>stock && !allowOversell)
+        throw IllegalStateException("Stock insuficiente para "+(names[productId]?:"producto")+
+         ": disponibles "+stock+", solicitadas "+qty+".")
+      }finally{product.close()}
+     }
+     for((productId,qty) in requirements){
+      val product=database.rawQuery("SELECT kind FROM products WHERE id=?",
+       arrayOf(productId.toString()))
+      val kind=try{if(product.moveToFirst())product.getString(0)?:"PRODUCTO" else ""}
+       finally{product.close()}
+      if(kind!="SERVICIO"){
+       database.execSQL("UPDATE products SET stock=stock-? WHERE id=?",
+        arrayOf(qty,productId))
        database.execSQL("INSERT INTO movements(product,qty,reason,created) VALUES(?,?,?,?)",
-        arrayOf(name,-quantity,"VENTA COT-"+id,today()))
-       database.execSQL("UPDATE quotes SET status='VENDIDA' WHERE id=?",arrayOf(id))
+        arrayOf(names[productId]?:"Producto",-qty,"VENTA COT-"+id,today()))
       }
      }
-     if(error==null)database.setTransactionSuccessful()
-    }catch(e:Exception){
-     error="No se pudo confirmar la venta: "+(e.message?:"Error de base de datos")
-    }finally{database.endTransaction()}
+     database.execSQL("UPDATE quotes SET status='VENDIDA' WHERE id=? AND status='PENDIENTE'",
+      arrayOf(id))
+     database.setTransactionSuccessful()
+    }catch(e:Exception){error=e.message?:"Error al confirmar venta"}
+    finally{if(database.inTransaction())database.endTransaction()}
     if(error!=null)toast(error!!) else{toast("Venta confirmada");quotes()}
    }.show()
  }
+
  private fun inventory(){
   screen("Kardex / Stock");button("← Inicio"){home()}
   val c=db.readableDatabase.rawQuery("SELECT name,stock,min_stock FROM products WHERE kind='PRODUCTO' ORDER BY name",null)
@@ -1797,6 +2062,229 @@ class MainActivity:Activity() {
 
  // A4/A5 apaisados tienen una composición apaisada real;
  // el ticket de 80 mm usa columnas estrechas y una página larga de recibo.
+
+ private data class PdfQuoteLine(
+  val code:String,val name:String,val unit:String,val qty:Int,val price:Double,
+  val pct:Double,val discount:Double,val taxable:Boolean,val lineTotal:Double,
+  val photoUri:String?,val includePhoto:Boolean
+ )
+ private fun writePdfMultiple(id:Long,out:java.io.OutputStream){
+  val dbRead=db.readableDatabase
+  val header=dbRead.rawQuery(
+   "SELECT client,client_id,currency,total,created FROM quotes WHERE id=?",
+   arrayOf(id.toString()))
+  var client="";var clientId:Long?=null;var currency="PEN";var total=0.0;var created=""
+  try{
+   if(!header.moveToFirst())throw IllegalStateException("La cotización no existe.")
+   client=header.getString(0)?:"Cliente"
+   if(!header.isNull(1))clientId=header.getLong(1)
+   currency=header.getString(2)?:"PEN"
+   total=header.getDouble(3);created=header.getString(4)?:""
+  }finally{header.close()}
+  val customer=if(clientId!=null)dbRead.rawQuery(
+   "SELECT document,address FROM clients WHERE id=? LIMIT 1",arrayOf(clientId.toString()))
+  else dbRead.rawQuery("SELECT document,address FROM clients WHERE name=? ORDER BY id DESC LIMIT 1",
+   arrayOf(client))
+  var document="";var address=""
+  try{if(customer.moveToFirst()){
+   document=customer.getString(0)?:"";address=customer.getString(1)?:""
+  }}finally{customer.close()}
+  val items=mutableListOf<PdfQuoteLine>()
+  val cur=dbRead.rawQuery(
+   "SELECT code,name,unit,qty,unit_price,discount_pct,discount_amount,igv,line_total,photo_uri,include_product_photo FROM quote_items WHERE quote_id=? ORDER BY id",
+   arrayOf(id.toString()))
+  try{while(cur.moveToNext()){
+   items.add(PdfQuoteLine(cur.getString(0)?:"",cur.getString(1)?:"Producto",
+    cur.getString(2)?:"UNIDADES",cur.getInt(3),cur.getDouble(4),
+    cur.getDouble(5),cur.getDouble(6),cur.getInt(7)==1,
+    cur.getDouble(8),cur.getString(9),cur.getInt(10)==1))
+  }}finally{cur.close()}
+  if(items.isEmpty())throw IllegalStateException("No hay productos en esta cotización.")
+  val ticket=pdfPaper=="Ticket 80 mm"
+  val paper=when(pdfPaper){
+   "A4 horizontal"->Pair(842,595)
+   "A4 vertical"->Pair(595,842)
+   "A5 vertical"->Pair(420,595)
+   "A5 horizontal"->Pair(595,420)
+   "Ticket 80 mm"->Pair(227,minOf(12000,maxOf(620,340+items.size*75)))
+   else->Pair(612,792)
+  }
+  val width=paper.first.toFloat();val height=paper.second.toFloat()
+  val margin=if(ticket)10f else if(width<500)20f else 28f
+  val contentWidth=width-2f*margin
+  val pdf=android.graphics.pdf.PdfDocument()
+  val paint=Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+  val currencyMark=if(currency=="USD")"US$" else "S/"
+  val labelColor=Color.rgb(18,52,90)
+  fun fmt(value:Double)=String.format(Locale.US,"%,.2f",value)
+  fun font(size:Float,bold:Boolean=false,color:Int=Color.BLACK){
+   paint.style=Paint.Style.FILL;paint.color=color;paint.textSize=size
+   paint.typeface=Typeface.create(Typeface.DEFAULT,if(bold)Typeface.BOLD else Typeface.NORMAL)
+  }
+  var number=0
+  var page=pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(paper.first,paper.second,++number).create())
+  var canvas=page.canvas
+  fun text(value:String,x:Float,y:Float,size:Float=9f,bold:Boolean=false,color:Int=Color.BLACK){
+   font(size,bold,color);canvas.drawText(value,x,y,paint)
+  }
+  fun right(value:String,x:Float,y:Float,size:Float=9f,bold:Boolean=false,color:Int=Color.BLACK){
+   font(size,bold,color);canvas.drawText(value,x-paint.measureText(value),y,paint)
+  }
+  fun fitted(value:String,x:Float,y:Float,maxWidth:Float,size:Float=9f,bold:Boolean=false){
+   font(size,bold)
+   var shown=value.replace("\n"," ")
+   if(paint.measureText(shown)>maxWidth){
+    while(shown.isNotEmpty()&&paint.measureText(shown+"…")>maxWidth)shown=shown.dropLast(1)
+    shown+="…"
+   }
+   canvas.drawText(shown,x,y,paint)
+  }
+  fun fillRect(left:Float,top:Float,right:Float,bottom:Float,color:Int){
+   paint.color=color;paint.style=Paint.Style.FILL
+   canvas.drawRect(left,top,right,bottom,paint)
+  }
+  fun rule(y:Float){fillRect(margin,y,width-margin,y+0.7f,Color.LTGRAY)}
+  fun drawHeader():Float{
+   val top=if(ticket)11f else 16f
+   if(!ticket){
+    try{
+     assets.open("belsiperu_logo.png").use{
+      val bitmap=BitmapFactory.decodeStream(it)
+      if(bitmap!=null){
+       drawProductImage(canvas,bitmap,RectF(margin,top,margin+73f,top+57f))
+       bitmap.recycle()
+      }
+     }
+    }catch(_:Exception){}
+   }
+   val titleX=if(ticket)margin else margin+83f
+   text("BELSIPERU S.A.C.",titleX,top+17f,if(ticket)13f else 17f,true,labelColor)
+   text("RUC 20605060634",titleX,top+34f,if(ticket)9f else 10f)
+   text("PROFORMA 0002-"+id.toString().padStart(7,'0'),titleX,top+50f,if(ticket)9f else 11f,true)
+   rule(top+65f)
+   fitted("CLIENTE: "+client,margin,top+82f,contentWidth,if(ticket)8f else 9f,true)
+   text("DOC.: "+(if(document.isBlank())"—" else document),margin,top+98f,8.5f)
+   fitted("DIRECCIÓN: "+address.ifBlank{"No registrada"},margin,top+113f,contentWidth,8f)
+   val date=created.take(10)
+   text("EMISIÓN: "+date,margin,top+128f,8f)
+   if(pdfExpiry.isNotBlank())right("VENCE: "+pdfExpiry,width-margin,top+128f,8f)
+   text("MONEDA: "+currency,margin,top+143f,8f)
+   rule(top+151f)
+   val labelsY=top+168f
+   if(ticket){
+    text("ARTÍCULOS / SERVICIOS",margin,labelsY,9f,true,labelColor)
+   }else{
+    text("CANT.",margin,labelsY,8f,true,labelColor)
+    text("PRODUCTO / SERVICIO",margin+contentWidth*0.13f,labelsY,8f,true,labelColor)
+    right("P. UNIT.",margin+contentWidth*0.80f,labelsY,8f,true,labelColor)
+    right("IMPORTE",width-margin,labelsY,8f,true,labelColor)
+   }
+   rule(labelsY+6f)
+   return labelsY+17f
+  }
+  fun drawPhoto(uriText:String?,box:RectF){
+   if(uriText.isNullOrBlank())return
+   try{
+    val uri=Uri.parse(uriText)
+    if(uri.scheme!="content")return
+    val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+    contentResolver.openInputStream(uri)?.use{BitmapFactory.decodeStream(it,null,bounds)}
+    if(bounds.outWidth<=0||bounds.outHeight<=0)return
+    var sample=1
+    while(bounds.outWidth/sample>260||bounds.outHeight/sample>260)sample*=2
+    val bitmap=contentResolver.openInputStream(uri)?.use{
+     BitmapFactory.decodeStream(it,null,BitmapFactory.Options().apply{inSampleSize=sample})
+    }
+    if(bitmap!=null){drawProductImage(canvas,bitmap,box);bitmap.recycle()}
+   }catch(_:Exception){}catch(_:OutOfMemoryError){}
+  }
+  fun rowHeight(item:PdfQuoteLine):Float=if(ticket){
+   if(item.includePhoto&&!item.photoUri.isNullOrBlank())108f else 56f
+  }else{
+   if(item.includePhoto&&!item.photoUri.isNullOrBlank())76f else 45f
+  }
+  var y=drawHeader()
+  fun endPage(next:Boolean){
+   text("Proforma comercial. No constituye comprobante tributario.",margin,height-18f,
+    if(ticket)7f else 8f,false,labelColor)
+   if(!ticket)right("Página "+number,width-margin,height-18f,8f,false,labelColor)
+   pdf.finishPage(page)
+   if(next){
+    number++
+    page=pdf.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(
+     paper.first,paper.second,number).create())
+    canvas=page.canvas
+    y=drawHeader()
+   }
+  }
+  try{
+   items.forEachIndexed{index,item->
+    val rowH=rowHeight(item)
+    if(!ticket&&y+rowH+115f>height){
+     endPage(true)
+    }
+    val top=y
+    if(ticket){
+     fitted((index+1).toString()+". "+item.name,margin,y+10f,contentWidth,9f,true)
+     fitted(item.code+" · "+item.unit,margin,y+24f,contentWidth,8f)
+     text("Cantidad: "+item.qty,margin,y+39f,8f)
+     right(currencyMark+" "+fmt(item.lineTotal),width-margin,y+39f,9f,true)
+     if(item.includePhoto){
+      drawPhoto(item.photoUri,RectF(margin+contentWidth-67f,top+42f,
+       width-margin,top+103f))
+     }
+    }else{
+     val descX=margin+contentWidth*0.13f
+     val descWidth=contentWidth*0.49f
+     text(item.qty.toString(),margin,y+12f,8.5f)
+     fitted(item.name,descX,y+11f,descWidth,9f,true)
+     fitted(item.code+" · "+item.unit,descX,y+24f,descWidth,7.5f)
+     if(item.discount>0.001 || item.pct>0.001)
+      fitted("Descuento: "+fmt(item.pct)+"% + "+fmt(item.discount),
+       descX,y+35f,descWidth,7.5f)
+     right(currencyMark+" "+fmt(item.price),margin+contentWidth*0.80f,y+12f,8.5f)
+     right(currencyMark+" "+fmt(item.lineTotal),width-margin,y+12f,9f,true)
+     if(item.includePhoto){
+      drawPhoto(item.photoUri,RectF(descX,y+38f,descX+49f,y+rowH-5f))
+     }
+    }
+    y+=rowH
+    rule(y)
+    y+=5f
+   }
+   if(!ticket&&y+112f>height)endPage(true)
+   y+=16f
+   val subtotal=items.sumOf{if(it.taxable)it.lineTotal/1.18 else it.lineTotal}
+   val tax=(total-subtotal).coerceAtLeast(0.0)
+   right("SUBTOTAL: "+currencyMark+" "+fmt(subtotal),width-margin,y,10f,true)
+   y+=19f
+   right("IGV: "+currencyMark+" "+fmt(tax),width-margin,y,10f)
+   y+=22f
+   right("TOTAL: "+currencyMark+" "+fmt(total),width-margin,y,if(ticket)13f else 15f,true,labelColor)
+   y+=20f
+   fitted("CONDICIÓN DE PAGO: "+pdfPayment,margin,y,contentWidth,8f)
+   y+=14f
+   fitted("RESPONSABLE: "+pdfSeller,margin,y,contentWidth,8f)
+   endPage(false)
+   pdf.writeTo(out)
+  }finally{pdf.close()}
+ }
+
+ private fun quoteClientDocumentAddress(quoteId:Long,clientName:String):Pair<String,String>{
+  val idCur=db.readableDatabase.rawQuery(
+   "SELECT client_id FROM quotes WHERE id=?",arrayOf(quoteId.toString()))
+  val clientId=try{
+   if(idCur.moveToFirst()&&!idCur.isNull(0))idCur.getLong(0) else null
+  }finally{idCur.close()}
+  val cc=if(clientId!=null)db.readableDatabase.rawQuery(
+   "SELECT document,address FROM clients WHERE id=? LIMIT 1",arrayOf(clientId.toString()))
+  else db.readableDatabase.rawQuery(
+   "SELECT document,address FROM clients WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(clientName))
+  return try{
+   if(cc.moveToFirst())Pair(cc.getString(0)?:"",cc.getString(1)?:"")
+   else Pair("","")
+  }finally{cc.close()}
+ }
  private fun writePdfProformaAdaptada(id:Long,out:java.io.OutputStream){
   val cur=db.readableDatabase.rawQuery(
     "SELECT client,product,qty,unit_price,discount,igv,currency,total,created,discount_amount,tax_affectation FROM quotes WHERE id=?",
@@ -1822,9 +2310,8 @@ class MainActivity:Activity() {
    val prod=db.readableDatabase.rawQuery("SELECT code FROM products WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(item))
    if(prod.moveToFirst())code=prod.getString(0)?:""
    prod.close()
-   val cli=db.readableDatabase.rawQuery("SELECT document,address FROM clients WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(client))
-   if(cli.moveToFirst()){document=cli.getString(0)?:"";address=cli.getString(1)?:""}
-   cli.close()
+   val customerInfo=quoteClientDocumentAddress(id,client)
+   document=customerInfo.first;address=customerInfo.second
    val timestamp=try{SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).parse(rawDate)}catch(_:Exception){null}
    val date=if(timestamp!=null)SimpleDateFormat("dd/MM/yyyy",Locale("es","PE")).format(timestamp) else rawDate.take(10)
    val time=if(timestamp!=null)SimpleDateFormat("hh:mm a",Locale.US).format(timestamp) else ""
@@ -2112,10 +2599,8 @@ class MainActivity:Activity() {
     "SELECT code FROM products WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(product))
    if(prod.moveToFirst())code=prod.getString(0)?:""
    prod.close()
-   val cc=db.readableDatabase.rawQuery(
-    "SELECT document,address FROM clients WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(client))
-   if(cc.moveToFirst()){document=cc.getString(0)?:"";address=cc.getString(1)?:""}
-   cc.close()
+   val clientInfo=quoteClientDocumentAddress(id,client)
+   document=clientInfo.first;address=clientInfo.second
    val curDate=try{
     val input=SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US)
     val d=input.parse(created)
@@ -2361,6 +2846,11 @@ class MainActivity:Activity() {
  }
 
  private fun writePdf(id:Long,out:java.io.OutputStream){
+  val count=db.readableDatabase.rawQuery("SELECT COUNT(*) FROM quote_items WHERE quote_id=?",
+   arrayOf(id.toString()))
+  val multi=try{count.moveToFirst()&&count.getInt(0)>1}finally{count.close()}
+  if(multi){writePdfMultiple(id,out);return}
+
   if(pdfStyle=="Proforma BELSIPERU"){writePdfProforma(id,out);return}
   val c=db.readableDatabase.rawQuery("SELECT client,product,qty,unit_price,discount,igv,currency,total,created,product_photo,discount_amount FROM quotes WHERE id=?",arrayOf(id.toString()))
   if(!c.moveToFirst()){c.close();return}
