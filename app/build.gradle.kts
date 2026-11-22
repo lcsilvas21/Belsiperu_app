@@ -11,14 +11,14 @@ android {
         applicationId = "pe.belsiperu.cotizaciones"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.1"
+        versionCode = 10
+        versionName = "1.2"
     }
 
     // La aplicación de prueba se instala junto a la original.
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".fotos"
+            applicationIdSuffix = ".icono"
             versionNameSuffix = "-prueba"
         }
     }
