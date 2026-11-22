@@ -54,6 +54,71 @@ class MainActivity:Activity() {
  private var pdfPayment="CONTADO"
  private fun today()=SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.getDefault()).format(Date())
 
+ // Carga la foto del catálogo más reciente; para cotizaciones antiguas usa
+ // la foto guardada con la propia cotización como respaldo.
+ private fun loadQuoteProductBitmap(quoteId:Long):Bitmap?{
+  val candidates=mutableListOf<String>()
+  var productName=""
+  val snapshot=db.readableDatabase.rawQuery(
+   "SELECT product,product_photo FROM quotes WHERE id=?",arrayOf(quoteId.toString()))
+  try{
+   if(snapshot.moveToFirst()){
+    productName=snapshot.getString(0)?:""
+    val previous=snapshot.getString(1)
+    if(!previous.isNullOrBlank())candidates.add(previous)
+   }
+  }finally{snapshot.close()}
+  if(productName.isNotBlank()){
+   val catalog=db.readableDatabase.rawQuery(
+    "SELECT photo_uri FROM products WHERE name=? ORDER BY id DESC LIMIT 1",arrayOf(productName))
+   try{
+    if(catalog.moveToFirst()){
+     val current=catalog.getString(0)
+     if(!current.isNullOrBlank()){
+      candidates.remove(current)
+      candidates.add(0,current)
+     }
+    }
+   }finally{catalog.close()}
+  }
+  for(path in candidates){
+   try{
+    val uri=Uri.parse(path)
+    if(uri.scheme!="content")continue
+    val dimensions=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+    contentResolver.openInputStream(uri)?.use{BitmapFactory.decodeStream(it,null,dimensions)}
+    if(dimensions.outWidth<=0 || dimensions.outHeight<=0)continue
+    var sample=1
+    while(dimensions.outWidth/sample>1280 || dimensions.outHeight/sample>1280)sample*=2
+    val options=BitmapFactory.Options().apply{inSampleSize=sample}
+    val picture=contentResolver.openInputStream(uri)?.use{BitmapFactory.decodeStream(it,null,options)}
+    if(picture!=null)return picture
+   }catch(_:Exception){
+    // La imagen puede haber sido eliminada o perder permisos; probar otra ruta.
+   }catch(_:OutOfMemoryError){
+    // Nunca se debe interrumpir la cotización por una imagen demasiado grande.
+   }
+  }
+  return null
+ }
+ private fun drawProductImage(canvas:Canvas,bitmap:Bitmap,box:RectF){
+  if(bitmap.isRecycled || bitmap.width<=0 || bitmap.height<=0)return
+  val padding=2f
+  val innerW=(box.width()-padding*2).coerceAtLeast(1f)
+  val innerH=(box.height()-padding*2).coerceAtLeast(1f)
+  val scale=minOf(innerW/bitmap.width.toFloat(),innerH/bitmap.height.toFloat())
+  val dw=bitmap.width*scale
+  val dh=bitmap.height*scale
+  val cx=box.centerX();val cy=box.centerY()
+  val target=RectF(cx-dw/2f,cy-dh/2f,cx+dw/2f,cy+dh/2f)
+  val paint=Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+  canvas.save()
+  canvas.clipRect(box)
+  canvas.drawBitmap(bitmap,null,target,paint)
+  canvas.restore()
+ }
+
+
  private fun d(v:Int)=(v*resources.displayMetrics.density+0.5f).toInt()
  private fun round(c:Int,r:Int=16,edge:Int?=null)=GradientDrawable().apply{
   shape=GradientDrawable.RECTANGLE
