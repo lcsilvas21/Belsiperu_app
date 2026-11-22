@@ -158,7 +158,7 @@ class MainActivity:Activity() {
     return serie+"-"+number.toString().padStart(7,'0')
    }
   }finally{cursor.close()}
-  return "0002-"+id.toString().padStart(7,'0')
+  return quoteDisplayNumber(id)
  }
  private fun activeQuoteSequence():Pair<String,Long>{
   val prefs=getSharedPreferences("quote_sequence",MODE_PRIVATE)
@@ -2052,7 +2052,7 @@ class MainActivity:Activity() {
    }finally{existing.close()}
   }
   screen(if(editQuoteId==null)"Nueva cotización" else
-   "Editar proforma 0002-"+editQuoteId.toString().padStart(7,'0'))
+   "Editar proforma "+quoteDisplayNumber(editQuoteId))
   button("← Inicio"){home()}
   heading("Información del cliente","Busca un cliente ya registrado por nombre, RUC o DNI.")
   label("Buscar cliente")
@@ -2458,6 +2458,9 @@ class MainActivity:Activity() {
    try{
     database.beginTransaction()
     if(editQuoteId==null){
+     val (serie,nextNumber)=assignNextQuoteSequence(database)
+     values.put("series",serie)
+     values.put("quote_number",nextNumber)
      createdId=database.insertOrThrow("quotes",null,values)
     }else{
      val status=database.rawQuery(
@@ -2513,7 +2516,7 @@ class MainActivity:Activity() {
     val currency=c.getString(3)?:"PEN"
     val status=c.getString(4)?:"PENDIENTE"
     val cardView=card()
-    cardView.addView(line("COT-"+quoteId.toString().padStart(6,'0')+" · "+status,15f,navy,true))
+    cardView.addView(line(quoteDisplayNumber(quoteId)+" · "+status,15f,navy,true))
     cardView.addView(line(client,14f,ink))
     var count=0;var withPhoto=false
     val lines=db.readableDatabase.rawQuery(
@@ -2754,7 +2757,7 @@ class MainActivity:Activity() {
   if(!dir.isDirectory&&!dir.mkdirs())throw java.io.IOException("No se pudo crear la carpeta temporal")
   val style=pdfStyle.replace(Regex("[^A-Za-z0-9]"),"_")
   val paper=pdfPaper.replace(Regex("[^A-Za-z0-9]"),"_")
-  val file=java.io.File(dir,"BELSIPERU_0002-"+id.toString().padStart(7,'0')+
+  val file=java.io.File(dir,"BELSIPERU_"+quoteDisplayNumber(id)+
    "_"+style+"_"+paper+".pdf")
   try{
    file.outputStream().use{writePdf(id,it)}
@@ -2783,7 +2786,7 @@ class MainActivity:Activity() {
  }
  private fun shareQuotePdf(id:Long,file:java.io.File,email:Boolean){
   val uri=sharedPdfUri(file)
-  val number="0002-"+id.toString().padStart(7,'0')
+  val number=quoteDisplayNumber(id)
   val intent=Intent(Intent.ACTION_SEND).apply{
    type=if(email)"message/rfc822" else "application/pdf"
    putExtra(Intent.EXTRA_STREAM,uri)
@@ -2859,7 +2862,7 @@ class MainActivity:Activity() {
   button("← Opciones PDF"){pdfOptions(id)}
   val summary=card()
   summary.addView(line("PROFORMA",19f,navy,true).apply{gravity=Gravity.CENTER})
-  summary.addView(line("0002-"+id.toString().padStart(7,'0'),18f,muted).apply{gravity=Gravity.CENTER})
+  summary.addView(line(quoteDisplayNumber(id),18f,muted).apply{gravity=Gravity.CENTER})
   summary.addView(line((if(currency=="USD")"US$ " else "S/ ")+
    pdfNumber(total),24f,ink,true).apply{gravity=Gravity.CENTER})
   summary.addView(line("Cliente",14f,navy,true))
@@ -2900,7 +2903,13 @@ class MainActivity:Activity() {
 
  private fun exportPdf(id:Long){
   pendingPdf=id
-  val intent=Intent(Intent.ACTION_CREATE_DOCUMENT).apply{addCategory(Intent.CATEGORY_OPENABLE);type="application/pdf";putExtra(Intent.EXTRA_TITLE,if(pdfStyle=="Proforma BELSIPERU")"BELSIPERU_PROFORMA_0002-${id.toString().padStart(7,'0')}_${when(pdfPaper){"A4 vertical"->"A4V";"A4 horizontal"->"A4H";"A5 vertical"->"A5V";"A5 horizontal"->"A5H";"Ticket 80 mm"->"TICKET80";else->"CARTA"}}.pdf" else "BELSIPERU_COT-${id.toString().padStart(6,'0')}.pdf")}
+  val filename="BELSIPERU_"+quoteDisplayNumber(id)+"_"+
+   pdfPaper.replace(Regex("[^A-Za-z0-9]"),"_")+".pdf"
+  val intent=Intent(Intent.ACTION_CREATE_DOCUMENT).apply{
+   addCategory(Intent.CATEGORY_OPENABLE)
+   type="application/pdf"
+   putExtra(Intent.EXTRA_TITLE,filename)
+  }
   startActivityForResult(intent,91)
  }
  @Deprecated("Legacy activity result used for minimal SDK example")
@@ -3058,7 +3067,7 @@ class MainActivity:Activity() {
    text("RUC "+company.ruc,titleX,top+34f,if(ticket)9f else 10f)
    if(company.fiscal.isNotBlank())
     fitted(company.fiscal,titleX,top+43f,width-titleX-margin,7f)
-   text("PROFORMA 0002-"+id.toString().padStart(7,'0'),titleX,top+55f,if(ticket)9f else 11f,true)
+   text("PROFORMA "+quoteDisplayNumber(id),titleX,top+55f,if(ticket)9f else 11f,true)
    rule(top+65f)
    fitted("CLIENTE: "+client,margin,top+82f,contentWidth,if(ticket)8f else 9f,true)
    text("DOC.: "+(if(document.isBlank())"—" else document),margin,top+98f,8.5f)
@@ -3342,7 +3351,7 @@ class MainActivity:Activity() {
      p.color=color;p.style=Paint.Style.FILL;canvas.drawRect(x,y,x2,y2,p)
     }
     fun logo(box:RectF){drawCompanyLogo(canvas,box)}
-    val num="0002-"+id.toString().padStart(7,'0')
+    val num=quoteDisplayNumber(id)
     if(ticket){
      // Recibo legible a 80 mm, de longitud suficiente para las cuentas bancarias.
      logo(RectF(61f,8f,166f,62f))
@@ -3642,7 +3651,7 @@ class MainActivity:Activity() {
    line(347.56f,15.05f,347.56f,103.47f,0.94f);line(544.15f,15.05f,544.15f,103.47f,0.94f)
    center("RUC "+company.ruc,347.09f,544.62f,35.7f,13.17f)
    center("PROFORMA",347.09f,544.62f,65.0f,15.05f,true)
-   center("0002-"+id.toString().padStart(7,'0'),347.09f,544.62f,94f,13.17f)
+   center(quoteDisplayNumber(id),347.09f,544.62f,94f,13.17f)
    // Ficha cliente y emisión.
    text("DOCUMENTO",15.05f,133.3f,8.47f,true)
    text("CLIENTE",15.05f,145.5f,8.47f,true)
@@ -3852,7 +3861,7 @@ class MainActivity:Activity() {
   val primary=if(modern)teal else navy
   val currencyMark=if(quoteCurrency=="USD")"US$" else "S/"
   val documentCode=if(modern)"COTIZACIÓN N° " else "PROFORMA DE VENTA · "
-  val quoteNumber="0002-"+id.toString().padStart(7,'0')
+  val quoteNumber=quoteDisplayNumber(id)
   val formattedDate=runCatching{
    val parse=SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.US).apply{isLenient=false}
    val date=parse.parse(quoteDate)
