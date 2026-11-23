@@ -25,6 +25,7 @@ on:
       - feat/numeracion-catalogo-excel-v1-21
       - feat/reporte-stock-kardex-v1-22
       - feat/inicio-logo-bienvenida-v1-23
+      - feat/seguridad-recuperacion-v1-24
   pull_request:
     branches:
       - main
@@ -61,6 +62,6 @@ jobs:
       - name: Guardar APK
         uses: actions/upload-artifact@v4
         with:
-          name: BELSIPERU-V1.23-APK-PRUEBA
+          name: BELSIPERU-V1.24-APK-PRUEBA
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
