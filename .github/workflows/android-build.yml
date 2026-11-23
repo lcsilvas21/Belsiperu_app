@@ -26,6 +26,7 @@ on:
       - feat/reporte-stock-kardex-v1-22
       - feat/inicio-logo-bienvenida-v1-23
       - feat/seguridad-recuperacion-v1-24
+      - feat/google-play-public-v1-25
   pull_request:
     branches:
       - main
@@ -44,11 +45,11 @@ jobs:
       - name: Configurar Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools'
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
       - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.10.2'
+          gradle-version: '8.11.1'
       - name: Compilar APK
         run: |
           for intento in 1 2 3; do
@@ -62,6 +63,15 @@ jobs:
       - name: Guardar APK
         uses: actions/upload-artifact@v4
         with:
-          name: BELSIPERU-V1.24-APK-PRUEBA
+          name: BELSIPERU-V1.25-APK-PRUEBA-PUBLICA
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Validar bundle de release (SIN FIRMA - NO PUBLICAR)
+        run: gradle bundleRelease --stacktrace --max-workers=2 --no-parallel
+      - name: Guardar bundle de validación no firmado
+        uses: actions/upload-artifact@v4
+        with:
+          name: BELSIPERU-V1.25-AAB-SIN-FIRMA-NO-PUBLICAR
+          path: app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
