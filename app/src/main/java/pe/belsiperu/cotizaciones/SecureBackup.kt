@@ -156,9 +156,12 @@ object SecureBackup {
      try{
       val src=context.contentResolver.openInputStream(Uri.parse(originalUri))
        ?:throw IllegalStateException("La foto ya no está disponible.")
-      // Evitar incluir archivos vacíos: el tamaño se valida al copiar.
+      // Leer y validar primero: no dejar entradas ZIP incompletas al omitir.
+      val data=src.use{readLimited(it,maxPhoto)}
+      if(data.isEmpty())throw IllegalStateException("Fotografía vacía.")
       val name="photos/photo_$i.bin"
-      src.use{bytes+=entry(zip,name,it,maxPhoto.toLong())}
+      bytesToZip(zip,name,data)
+      bytes+=data.size
       mapping.put(originalUri,name)
       writtenPhotos++
      }catch(_:Exception){skipped++}
@@ -189,7 +192,7 @@ object SecureBackup {
     require(entries<=maxPhotos+10){"Respaldo con demasiados archivos."}
     val name=item.name
     require(name=="database.sqlite"||name=="preferences.json"||
-     name=="company_logo.png"||
+     name=="company_logo.png"||name=="photo_map.json"||
      name.matches(Regex("photo[s]/photo_[0-9]{1,4}[.]bin"))){"Archivo no permitido."}
     val dest=File(dir,name)
     require(dest.canonicalPath.startsWith(dir.canonicalPath+File.separator)){
@@ -271,12 +274,15 @@ object SecureBackup {
   password:CharArray):Restored{
   require(password.size>=10){"Contraseña de respaldo incorrecta o demasiado corta."}
   val header=ByteArray(magic.size)
-  require(input.read(header)==header.size && header.contentEquals(magic)){
+  val data=java.io.DataInputStream(input)
+  try{data.readFully(header)}catch(_:Exception){throw IllegalArgumentException("Archivo incompleto.")}
+  require(header.contentEquals(magic)){
    "El archivo no tiene el formato de respaldo BELSIPERU."
   }
   val salt=ByteArray(16);val iv=ByteArray(12)
-  require(input.read(salt)==16&&input.read(iv)==12){"Respaldo incompleto."}
-  val enc=readLimited(input,maxInput)
+  try{data.readFully(salt);data.readFully(iv)}
+   catch(_:Exception){throw IllegalArgumentException("Respaldo incompleto.")}
+  val enc=readLimited(data,maxInput)
   val cipher=Cipher.getInstance("AES/GCM/NoPadding").apply{
    init(Cipher.DECRYPT_MODE,key(password,salt),GCMParameterSpec(128,iv))
   }
