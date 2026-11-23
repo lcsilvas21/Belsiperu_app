@@ -814,6 +814,301 @@ class MainActivity:Activity() {
 
  // Texto mostrado solo en la tarjeta de inicio; no cambia la razón social,
  // el logotipo, la numeración ni los datos impresos en PDF.
+
+ private fun securitySettings(){
+  if(!sessionAuthenticated){lock();return}
+  screen("Seguridad y recuperación")
+  button("← Configuración"){settings()}
+  heading("Seguridad de acceso",
+   "Administra tu PIN, huella y código de recuperación sin afectar las cotizaciones.")
+  info("Protección local",
+   "Tu PIN y el código de emergencia se almacenan como verificadores derivados con sal aleatoria. "+
+   "Tras varios intentos fallidos, el acceso se bloquea temporalmente.")
+  button("🔑 Cambiar PIN"){changeAccessPinScreen()}
+  button("🛟 Regenerar código de emergencia"){recoveryCodeSettings()}
+  if(android.os.Build.VERSION.SDK_INT>=28){
+   button(if(security.isBiometricEnabled())"◉ Desactivar huella digital" else
+    "◉ Activar huella digital"){
+    if(security.isBiometricEnabled())disableBiometricScreen()
+    else activateBiometricScreen()
+   }
+  }else info("Huella no disponible",
+   "Esta función requiere Android 9 o posterior y biometría fuerte configurada en el teléfono.")
+  heading("Copias de seguridad",
+   "Exporta una copia cifrada del inventario, clientes, cotizaciones, ajustes y fotos disponibles.")
+  button("⬇ Crear respaldo cifrado (.belsbak)"){backupExportScreen()}
+  button("⬆ Restaurar respaldo cifrado"){backupRestoreScreen()}
+  info("Precaución antes de restaurar",
+   "La restauración reemplaza los datos comerciales actuales de esta instalación. "+
+   "Conserva tu PIN y código de recuperación actual. Guarda primero una copia propia.")
+  heading("Correo de recuperación","Preparación para un servicio de verificación futuro")
+  val emailPrefs=getSharedPreferences("belsiperu_recovery_contact",MODE_PRIVATE)
+  val email=input("Correo de contacto")
+  email.inputType=InputType.TYPE_CLASS_TEXT or
+   InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+  email.setText(emailPrefs.getString("email","")?:"")
+  button("Guardar correo de contacto"){
+   val value=email.text.toString().trim()
+   if(value.isNotEmpty() && !android.util.Patterns.EMAIL_ADDRESS.matcher(value).matches()){
+    email.error="Introduce un correo válido.";return@button
+   }
+   emailPrefs.edit().putString("email",value).apply()
+   toast("Correo de contacto guardado. No está habilitado para recuperar el PIN.")
+  }
+  info("Recuperación por correo todavía no operativa",
+   "Guardar un correo no verifica su titularidad ni envía códigos. "+
+   "Para restablecer un PIN por email se necesita un servicio remoto de verificación seguro. "+
+   "Por ahora utiliza el código de emergencia o la huella activada previamente.",
+   Color.rgb(171,106,17))
+ }
+ private fun changeAccessPinScreen(){
+  screen("Cambiar PIN")
+  button("← Seguridad"){securitySettings()}
+  heading("Actualizar PIN","El PIN anterior es obligatorio.")
+  label("PIN actual");val old=securePinField("PIN actual")
+  label("Nuevo PIN");val fresh=securePinField("Nuevo PIN de 4 a 6 dígitos")
+  label("Confirma PIN nuevo");val confirmed=securePinField("Repite el PIN")
+  button("✓ Cambiar PIN"){
+   if(fresh.text.toString()!=confirmed.text.toString()){
+    toast("Los nuevos PIN no coinciden.");return@button
+   }
+   if(security.changePin(old.text.toString(),fresh.text.toString())){
+    old.text.clear();fresh.text.clear();confirmed.text.clear()
+    toast("PIN actualizado correctamente")
+    securitySettings()
+   }else toast("No se pudo cambiar: verifica el PIN anterior y los dígitos.")
+  }
+ }
+ private fun recoveryCodeSettings(){
+  screen("Código de emergencia")
+  button("← Seguridad"){securitySettings()}
+  heading("Generar código nuevo",
+   "El código anterior dejará de funcionar. Solo se mostrará una vez.")
+  label("Confirma tu PIN actual")
+  val pin=securePinField("PIN actual")
+  button("Generar nuevo código"){
+   if(!security.verifyPin(pin.text.toString())){
+    toast("PIN incorrecto o acceso temporalmente bloqueado.");return@button
+   }
+   pin.text.clear()
+   try{showRecoveryCode(security.rotateRecoveryCode(),"Tu nuevo código de emergencia")}
+   catch(e:Exception){toast("No se pudo guardar el nuevo código: "+(e.message?:"Error"))}
+  }
+ }
+ private fun biometricIsAvailable():Boolean{
+  if(android.os.Build.VERSION.SDK_INT<28)return false
+  return try{
+   if(android.os.Build.VERSION.SDK_INT>=30){
+    val manager=getSystemService(android.hardware.biometrics.BiometricManager::class.java)
+    manager?.canAuthenticate(
+     android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG)==
+     android.hardware.biometrics.BiometricManager.BIOMETRIC_SUCCESS
+   }else if(android.os.Build.VERSION.SDK_INT>=29){
+    @Suppress("DEPRECATION")
+    val manager=getSystemService(android.hardware.biometrics.BiometricManager::class.java)
+    @Suppress("DEPRECATION")
+    manager?.canAuthenticate()==android.hardware.biometrics.BiometricManager.BIOMETRIC_SUCCESS
+   }else{
+    @Suppress("DEPRECATION")
+    val manager=getSystemService(Context.FINGERPRINT_SERVICE) as?
+     android.hardware.fingerprint.FingerprintManager
+    @Suppress("DEPRECATION")
+    manager?.isHardwareDetected==true && manager.hasEnrolledFingerprints()
+   }
+  }catch(_:Exception){false}
+ }
+ private fun activateBiometricScreen(){
+  screen("Activar huella")
+  button("← Seguridad"){securitySettings()}
+  heading("Protección con huella",
+   "Se requiere la biometría fuerte del teléfono, vinculada a una clave de Android Keystore.")
+  if(!biometricIsAvailable()){
+   info("No hay huella configurada",
+    "Activa una huella digital compatible en Ajustes del teléfono y vuelve a intentarlo.")
+   return
+  }
+  label("PIN actual")
+  val pin=securePinField("Confirma el PIN actual")
+  button("Verificar PIN y registrar huella"){
+   if(!security.verifyPin(pin.text.toString())){
+    toast("PIN incorrecto o acceso bloqueado.");return@button
+   }
+   pin.text.clear()
+   authenticateBiometric(true)
+  }
+ }
+ private fun disableBiometricScreen(){
+  screen("Desactivar huella")
+  button("← Seguridad"){securitySettings()}
+  heading("Desactivar acceso biométrico",
+   "El acceso con PIN seguirá funcionando.")
+  label("PIN actual")
+  val pin=securePinField("Confirma tu PIN")
+  button("Confirmar desactivación"){
+   if(!security.verifyPin(pin.text.toString())){
+    toast("PIN incorrecto.");return@button
+   }
+   security.disableBiometric()
+   toast("Huella desactivada")
+   securitySettings()
+  }
+ }
+ private fun authenticateBiometric(enroll:Boolean){
+  if(android.os.Build.VERSION.SDK_INT<28||!biometricIsAvailable()){
+   toast("No hay biometría fuerte disponible en este dispositivo.")
+   return
+  }
+  try{
+   val cipher=if(enroll)security.createEnrollCipher()
+    else security.createUnlockCipher()
+   val prompt=android.hardware.biometrics.BiometricPrompt.Builder(this)
+    .setTitle(if(enroll)"Activar huella BELSIPERU" else "Entrar a BELSIPERU")
+    .setSubtitle("Utiliza la huella registrada en Android")
+    .setNegativeButton("Cancelar",mainExecutor){_,_->}
+    .build()
+   val cancel=android.os.CancellationSignal()
+   prompt.authenticate(
+    android.hardware.biometrics.BiometricPrompt.CryptoObject(cipher),
+    cancel,mainExecutor,
+    object:android.hardware.biometrics.BiometricPrompt.AuthenticationCallback(){
+     override fun onAuthenticationSucceeded(
+      result:android.hardware.biometrics.BiometricPrompt.AuthenticationResult){
+      val verifiedCipher=result.cryptoObject?.cipher
+      if(verifiedCipher==null){
+       toast("No se recibió la verificación criptográfica.");return
+      }
+      try{
+       if(enroll){
+        if(security.finishEnrollment(verifiedCipher)){
+         toast("Huella activada correctamente.")
+         securitySettings()
+        }else toast("No se pudo activar la huella.")
+       }else{
+        if(security.finishUnlock(verifiedCipher))unlockHome()
+        else toast("No se pudo verificar la huella. Usa tu PIN.")
+       }
+      }catch(e:Exception){
+       toast("No se pudo completar la verificación: "+(e.message?:"Error"))
+      }
+     }
+     override fun onAuthenticationError(errorCode:Int,errString:CharSequence){
+      if(errorCode!=android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED &&
+       errorCode!=android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_NEGATIVE_BUTTON){
+       toast("Biometría no disponible: "+errString.toString()+". Usa tu PIN.")
+      }
+     }
+    })
+  }catch(e:Exception){
+   toast("No se pudo iniciar la huella: "+(e.message?:"Usa tu PIN"))
+  }
+ }
+ private fun backupPasswordField(labelText:String):EditText{
+  label(labelText)
+  return input(labelText).apply{
+   inputType=InputType.TYPE_CLASS_TEXT or
+    InputType.TYPE_TEXT_VARIATION_PASSWORD
+   filters=arrayOf(android.text.InputFilter.LengthFilter(128))
+  }
+ }
+ private fun backupExportScreen(){
+  screen("Crear respaldo cifrado")
+  button("← Seguridad"){securitySettings()}
+  heading("Copia de seguridad protegida",
+   "Una contraseña independiente del PIN protege tu archivo usando AES-256-GCM. "+
+   "Consérvala: sin ella no se puede descifrar el respaldo.")
+  info("Incluye","Productos, clientes, cotizaciones, inventario, "+
+   "configuración comercial y fotografías que todavía puedan leerse.")
+  info("No incluye","PIN, código de emergencia ni claves biométricas. "+
+   "El acceso de esta instalación seguirá siendo el mismo tras restaurar.")
+  val pass=backupPasswordField("Contraseña del respaldo (mínimo 10 caracteres)")
+  val confirm=backupPasswordField("Repite la contraseña")
+  button("Elegir dónde guardar respaldo (.belsbak)"){
+   val first=pass.text.toString()
+   if(first.length<10||first!=confirm.text.toString()){
+    toast("La contraseña debe tener 10 caracteres o más y coincidir.")
+    return@button
+   }
+   pendingBackupPassword?.fill('\u0000')
+   pendingBackupPassword=first.toCharArray()
+   pass.text.clear();confirm.text.clear()
+   val filename="BELSIPERU_RESPALDO_"+
+    SimpleDateFormat("yyyyMMdd_HHmm",Locale.US).format(Date())+".belsbak"
+   startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply{
+    addCategory(Intent.CATEGORY_OPENABLE)
+    type="application/octet-stream"
+    putExtra(Intent.EXTRA_TITLE,filename)
+   },111)
+  }
+ }
+ private fun backupRestoreScreen(){
+  screen("Restaurar respaldo cifrado")
+  button("← Seguridad"){securitySettings()}
+  heading("Importar respaldo BELSIPERU",
+   "Únicamente archivos .belsbak creados desde la nueva función de respaldo.")
+  info("Atención: reemplazo de información",
+   "Se reemplazarán todos los clientes, cotizaciones, inventario y ajustes comerciales "+
+   "de ESTA instalación. Tu PIN y código de emergencia actuales se conservarán.",
+   Color.rgb(168,105,20))
+  val pass=backupPasswordField("Contraseña con la que protegiste el respaldo")
+  button("Elegir archivo .belsbak"){
+   val value=pass.text.toString()
+   if(value.length<10){toast("Introduce la contraseña completa.");return@button}
+   pendingBackupPassword?.fill('\u0000')
+   pendingBackupPassword=value.toCharArray()
+   pass.text.clear()
+   startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply{
+    addCategory(Intent.CATEGORY_OPENABLE)
+    type="*/*"
+    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+   },112)
+  }
+ }
+ private fun backupExportFile(uri:Uri,password:CharArray){
+  Thread{
+   try{
+    val stream=contentResolver.openOutputStream(uri)
+     ?:throw IllegalStateException("No se pudo abrir el archivo.")
+    val result=stream.use{SecureBackup.export(this,db,it,password)}
+    runOnUiThread{
+     toast("Respaldo cifrado creado: "+result.photoCount+
+      " fotografías. "+result.inaccessiblePhotos+" no disponibles.")
+     securitySettings()
+    }
+   }catch(e:Exception){
+    runOnUiThread{toast("Error al crear respaldo: "+(e.message?:"Archivo inválido"))}
+   }finally{password.fill('\u0000')}
+  }.start()
+ }
+ private fun backupRestoreFile(uri:Uri,password:CharArray){
+  // Confirmación adicional previa a cualquier modificación de datos.
+  AlertDialog.Builder(this).setTitle("Reemplazar datos actuales")
+   .setMessage("Esta operación sustituirá la base de datos y ajustes comerciales de esta "+
+    "instalación. Los datos que existen ahora desaparecerán salvo que tengas "+
+    "otro respaldo.\n\n¿Restaurar el archivo seleccionado?")
+   .setNegativeButton("Cancelar"){_,_->password.fill('\u0000')}
+   .setPositiveButton("Sí, restaurar"){_,_->
+    Thread{
+     try{
+      val stream=contentResolver.openInputStream(uri)
+       ?:throw IllegalArgumentException("No se pudo abrir el archivo.")
+      val result=stream.use{SecureBackup.restore(this,db,it,password)}
+      runOnUiThread{
+       db=Store(this)
+       toast("Respaldo restaurado; "+result.photoCount+" fotos recuperadas.")
+       sessionAuthenticated=false
+       lock()
+      }
+     }catch(e:Exception){
+      runOnUiThread{
+       db=Store(this)
+       toast("Restauración fallida: "+(e.message?:"Archivo inválido"))
+       securitySettings()
+      }
+     }finally{password.fill('\u0000')}
+    }.start()
+   }.show()
+ }
+
  private fun welcomeDisplayName():String{
   val value=getSharedPreferences("belsiperu_home_ui",MODE_PRIVATE)
    .getString("welcome_name","BELSIPERU")?.trim().orEmpty()
@@ -3595,6 +3890,17 @@ class MainActivity:Activity() {
  @Deprecated("Legacy activity result used for minimal SDK example")
  override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){
   super.onActivityResult(requestCode,resultCode,data)
+  if(requestCode==111 || requestCode==112){
+   val pass=pendingBackupPassword
+   pendingBackupPassword=null
+   if(pass!=null){
+    if(resultCode==RESULT_OK && data?.data!=null){
+     if(requestCode==111)backupExportFile(data.data!!,pass)
+     else backupRestoreFile(data.data!!,pass)
+    }else pass.fill('\u0000')
+   }
+   return
+  }
   if(requestCode==97 && resultCode==RESULT_OK && data?.data!=null){
    writeStockDocument(data.data!!,true)
    return
