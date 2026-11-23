@@ -5,20 +5,41 @@ plugins {
 
 android {
     namespace = "pe.belsiperu.cotizaciones"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
-        applicationId = "pe.belsiperu.cotizaciones"
+        applicationId = "pe.belsiperu.gestioncomercial"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 32
-        versionName = "1.24"
+        targetSdk = 36
+        versionCode = 33
+        versionName = "1.25.0-rc1"
     }
 
-    // Instalación de prueba independiente: las bases SQLite de otras versiones no se comparten.
+    // Firma de publicación: solo se activa si el propietario configura
+    // los cuatro secretos de subida fuera del repositorio.
+    val uploadFile = System.getenv("BELSI_UPLOAD_KEYSTORE_PATH")
+    val uploadAlias = System.getenv("BELSI_UPLOAD_KEY_ALIAS")
+    val uploadStorePass = System.getenv("BELSI_UPLOAD_STORE_PASSWORD")
+    val uploadKeyPass = System.getenv("BELSI_UPLOAD_KEY_PASSWORD")
+    val hasUploadKey = listOf(uploadFile, uploadAlias, uploadStorePass, uploadKeyPass)
+        .all { !it.isNullOrBlank() }
+    if (hasUploadKey) {
+        signingConfigs {
+            create("playUpload") {
+                storeFile = file(uploadFile!!)
+                storePassword = uploadStorePass
+                keyAlias = uploadAlias
+                keyPassword = uploadKeyPass
+            }
+        }
+    }
     buildTypes {
+        getByName("release") {
+            isDebuggable = false
+            if (hasUploadKey) signingConfig = signingConfigs.getByName("playUpload")
+        }
         getByName("debug") {
-            applicationIdSuffix = ".pdfv124"
+            applicationIdSuffix = ".publictest"
             versionNameSuffix = "-prueba"
         }
     }
