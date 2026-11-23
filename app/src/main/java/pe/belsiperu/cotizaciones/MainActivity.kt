@@ -128,7 +128,7 @@ class MainActivity:Activity() {
  private var pdfPaper="Carta vertical"
  private var pdfStyle="Proforma BELSIPERU"
  private var pdfExpiry=""
- private var pdfSeller="BELSIPERU"
+ private var pdfSeller="Asesor comercial"
  private var pdfPayment="CONTADO"
  private var companyLogoPreview:ImageView?=null
  private fun companyPrefs()=getSharedPreferences("belsiperu_company_pdf",MODE_PRIVATE)
@@ -141,15 +141,15 @@ class MainActivity:Activity() {
   val prefs=companyPrefs()
   fun get(key:String,otherwise:String="")=prefs.getString(key,otherwise)?:otherwise
   return CompanyPdfInfo(
-   get("ruc","20605060634"),
-   get("legal","BELSIPERU S.A.C."),
-   get("commercial","BELSIPERU"),
+   get("ruc",""),
+   get("legal","Mi negocio"),
+   get("commercial",""),
    get("fiscal",""),
-   get("business","Maquinaria y equipos industriales"),
-   get("regime","Régimen MYPE Tributario"),
-   get("header","LO MEJOR EN MÁQUINAS Y HERRAMIENTAS INDUSTRIALES PARA EL PERÚ"),
+   get("business","Comercio y servicios"),
+   get("regime",""),
+   get("header","GESTIÓN COMERCIAL · COTIZACIONES · INVENTARIO"),
    get("banks",""),
-   get("footer","Los productos en stock se entregan dentro de 48 horas, salvo venta previa."),
+   get("footer","Precios sujetos a confirmación y disponibilidad."),
    prefs.getInt("decimals",2).coerceIn(2,4)
   )
  }
@@ -262,6 +262,8 @@ class MainActivity:Activity() {
   }
  }
  private fun drawCompanyLogo(canvas:Canvas,rect:RectF,sinFondo:Boolean=false){
+  // El logo de la plataforma no se usa como identidad del negocio.
+  if(!companyLogoFile().isFile)return
   val original=loadCompanyLogoBitmap()?:return
   var processed:Bitmap?=null
   try{
@@ -734,6 +736,7 @@ class MainActivity:Activity() {
 
  private fun home(){
   if(!sessionAuthenticated){lock();return}
+  if(!companyConfigured()){companySetup();return}
   screen("Inicio")
   val hero=LinearLayout(this).apply{
    orientation=LinearLayout.VERTICAL;setPadding(d(19),d(20),d(19),d(20))
@@ -743,7 +746,7 @@ class MainActivity:Activity() {
   hero.addView(line("Tu negocio organizado, desde un solo lugar.",13f,Color.WHITE))
   body.addView(hero)
   button("＋  NUEVA COTIZACIÓN"){newQuote()}
-  heading("Accesos rápidos","Todo lo que necesitas para gestionar tu ferretería")
+  heading("Accesos rápidos","Herramientas para administrar tu negocio")
   tileRow(tile("Cotizaciones","Historial y PDF",android.R.drawable.ic_menu_edit){quotes()},tile("Productos","Catálogo y fotos",android.R.drawable.ic_menu_agenda){products()})
   tileRow(tile("Inventario","Stock y Kardex",android.R.drawable.ic_menu_sort_by_size){inventory()},tile("Clientes","Datos y contactos",android.R.drawable.ic_menu_myplaces){clients()})
   tileRow(tile("Compras","Ingresos de stock",android.R.drawable.ic_input_add){purchases()},tile("Reportes","Resumen de gestión",android.R.drawable.ic_menu_info_details){reports()})
@@ -754,7 +757,7 @@ class MainActivity:Activity() {
   tileRow(tile(q.toString()+" cotizaciones","Historial guardado",android.R.drawable.ic_menu_edit){quotes()},tile(p.toString()+" productos","En catálogo",android.R.drawable.ic_menu_agenda){products()})
   if(low>0)info("Atención: "+low+" producto(s) con stock bajo","Revisa Inventario para reponer existencias.",Color.rgb(169,105,19))
   button("⚙  Configuración"){settings()}
-  body.addView(line("BELSIPERU V2 • Prototipo de uso local",11f,muted).apply{gravity=Gravity.CENTER})
+  body.addView(line("BELSIPERU Gestión Comercial · Datos locales y copias de seguridad",11f,muted).apply{gravity=Gravity.CENTER})
  }
  private fun purchases(){
   screen("Compras")
@@ -1111,8 +1114,8 @@ class MainActivity:Activity() {
 
  private fun welcomeDisplayName():String{
   val value=getSharedPreferences("belsiperu_home_ui",MODE_PRIVATE)
-   .getString("welcome_name","BELSIPERU")?.trim().orEmpty()
-  return value.ifBlank{"BELSIPERU"}
+   .getString("welcome_name",companyInfo().commercial.ifBlank{companyInfo().legal})?.trim().orEmpty()
+  return value.ifBlank{companyInfo().commercial.ifBlank{companyInfo().legal}}
  }
  private fun welcomeMessageSettings(){
   screen("Configuración · Bienvenida")
@@ -1131,7 +1134,7 @@ class MainActivity:Activity() {
   name.addTextChangedListener(object:TextWatcher{
    override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){}
    override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){
-    val label=s?.toString()?.trim().orEmpty().ifBlank{"BELSIPERU"}
+    val label=s?.toString()?.trim().orEmpty().ifBlank{companyInfo().legal}
     preview.text="¡Hola! Bienvenido a "+label
    }
    override fun afterTextChanged(s:Editable?){}
@@ -1147,7 +1150,7 @@ class MainActivity:Activity() {
    toast("Mensaje de bienvenida actualizado")
    home()
   }
-  button("Restaurar el nombre BELSIPERU"){
+  button("Usar el nombre de mi empresa"){
    getSharedPreferences("belsiperu_home_ui",MODE_PRIVATE).edit()
     .remove("welcome_name").apply()
    toast("Se restauró la bienvenida original")
@@ -1220,6 +1223,25 @@ class MainActivity:Activity() {
    settings()
   }
  }
+ private fun companyConfigured():Boolean{
+  val prefs=companyPrefs()
+  return prefs.getBoolean("setup_complete",false)||
+   !prefs.getString("legal",null).isNullOrBlank()
+ }
+ private fun companySetup(){
+  screen("Configura tu negocio")
+  heading("Bienvenido a BELSIPERU Gestión Comercial",
+   "Para empezar, registra los datos de TU negocio. Tus clientes y productos "+
+   "quedarán guardados en este dispositivo, no en una cuenta compartida.")
+  info("Datos de cada negocio",
+   "Puedes utilizar la aplicación en una ferretería, tienda, taller o empresa de "+
+   "servicios. Los PDF mostrarán el nombre y el logotipo que configures.")
+  info("Uso inicial",
+   "El nombre de la plataforma no sustituye tu razón social. El RUC es opcional "+
+   "si todavía no lo tienes; la aplicación no emite comprobantes electrónicos.")
+  button("🏢 Configurar datos de mi negocio"){companySettings()}
+  button("Consultar privacidad y tratamiento de datos"){privacyNotice()}
+ }
  private fun companySettings(){
   screen("Configuración · Empresa")
   button("← Volver a Configuración"){settings()}
@@ -1233,7 +1255,7 @@ class MainActivity:Activity() {
    setPadding(d(10),d(10),d(10),d(10))
   }
   companyLogoPreview=preview
-  loadCompanyLogoBitmap()?.let{preview.setImageBitmap(it)}
+  if(companyLogoFile().isFile)loadCompanyLogoBitmap()?.let{preview.setImageBitmap(it)}
   body.addView(preview,LinearLayout.LayoutParams(-1,d(145)).apply{
    setMargins(0,d(6),0,d(4))
   })
@@ -1246,14 +1268,12 @@ class MainActivity:Activity() {
    }
    startActivityForResult(intent,94)
   }
-  button("Usar logotipo predeterminado"){
+  button("Quitar logotipo de esta empresa"){
    companyLogoFile().delete()
-   companyLogoPreview?.let{view->
-    loadCompanyLogoBitmap()?.let{view.setImageBitmap(it)}
-   }
-   toast("Se utilizará el logotipo original.")
+   companyLogoPreview?.setImageDrawable(null)
+   toast("No se usará un logotipo en los PDF.")
   }
-  label("RUC de la empresa *")
+  label("RUC de la empresa (opcional; 11 dígitos si lo ingresas)")
   val ruc=input("11 dígitos")
   ruc.inputType=InputType.TYPE_CLASS_NUMBER
   ruc.filters=arrayOf(android.text.InputFilter.LengthFilter(11))
@@ -1264,7 +1284,7 @@ class MainActivity:Activity() {
   label("Nombre comercial")
   val commercial=input("Marca o nombre comercial")
   commercial.setText(previous.commercial)
-  val fiscal=settingTextArea("Dirección fiscal *",previous.fiscal,3)
+  val fiscal=settingTextArea("Dirección fiscal (opcional)",previous.fiscal,3)
   label("Rubro del negocio")
   val business=input("Actividad comercial")
   business.setText(previous.business)
@@ -1275,19 +1295,19 @@ class MainActivity:Activity() {
    val tax=ruc.text.toString().trim()
    val name=legal.text.toString().trim()
    val addr=fiscal.text.toString().trim()
-   if(!tax.matches(Regex("[0-9]{11}"))){
+   if(tax.isNotBlank()&&!tax.matches(Regex("[0-9]{11}"))){
     ruc.error="El RUC requiere 11 dígitos.";ruc.requestFocus();return@button
    }
    if(name.isBlank()){legal.error="Ingresa la razón social";legal.requestFocus();return@button}
-   if(addr.isBlank()){fiscal.error="Ingresa la dirección fiscal";fiscal.requestFocus();return@button}
-   val ok=companyPrefs().edit()
+      val ok=companyPrefs().edit()
     .putString("ruc",tax).putString("legal",name)
     .putString("commercial",commercial.text.toString().trim())
     .putString("fiscal",addr)
     .putString("business",business.text.toString().trim())
     .putString("regime",regime.text.toString().trim())
+    .putBoolean("setup_complete",true)
     .commit()
-   if(ok){toast("Datos de empresa guardados para los PDF");settings()}
+   if(ok){toast("Datos de tu empresa guardados");home()}
    else toast("No se pudo guardar la configuración.")
   }
  }
@@ -3716,7 +3736,7 @@ class MainActivity:Activity() {
    pdfStyle=selectedStyle
    pdfPaper=paper.selectedItem.toString()
    pdfExpiry=dateText
-   pdfSeller=seller.text.toString().trim().ifEmpty{"BELSIPERU"}
+   pdfSeller=seller.text.toString().trim().ifEmpty{"Asesor comercial"}
    pdfPayment=payment.text.toString().trim().ifEmpty{"CONTADO"}
    documentActions(id)
   }
@@ -3761,8 +3781,8 @@ class MainActivity:Activity() {
   val intent=Intent(Intent.ACTION_SEND).apply{
    type=if(email)"message/rfc822" else "application/pdf"
    putExtra(Intent.EXTRA_STREAM,uri)
-   putExtra(Intent.EXTRA_SUBJECT,"Proforma BELSIPERU "+number)
-   putExtra(Intent.EXTRA_TEXT,"Adjunto la proforma "+number+" de BELSIPERU S.A.C.")
+   putExtra(Intent.EXTRA_SUBJECT,"Cotización "+number+" · "+companyInfo().legal)
+   putExtra(Intent.EXTRA_TEXT,"Adjunto la cotización "+number+" de "+companyInfo().legal+".")
    if(email){
     val recipient=quoteRecipientEmail(id)
     if(recipient.isNotBlank())putExtra(Intent.EXTRA_EMAIL,arrayOf(recipient))
@@ -4483,7 +4503,7 @@ class MainActivity:Activity() {
       pdfTextLines(company.footer,790f,8.2f,2)
        .forEachIndexed{i,value->center(value,left,rightEdge,551f+i*11f,8.2f)}
       center(company.commercial.ifBlank{company.legal},left,rightEdge,578f,11f,true)
-     center("Proforma comercial emitida por BELSIPERU. No es comprobante de pago electrónico.",left,rightEdge,591f,7.2f)
+     center("Proforma comercial generada mediante BELSIPERU. No es comprobante de pago electrónico.",left,rightEdge,591f,7.2f)
     }
     canvas.restore()
     productPicture?.recycle()
@@ -4981,7 +5001,7 @@ class MainActivity:Activity() {
      x,61f,w-margin-x,if(compact)7f else 8.5f,false,Color.WHITE)
     clipped("RUC "+config.ruc,x,80f,w-margin-x,8f,false,Color.WHITE)
     rect(0f,108f,w,125f,Color.rgb(244,246,248))
-    textCenter("BELSIPERU  •  MAQUINARIAS  •  HERRAMIENTAS  •  INDUSTRIA",
+    textCenter(config.commercial.ifBlank{config.legal}+"  •  GESTIÓN COMERCIAL",
      w/2f,120f,if(compact)6.3f else 8.1f,true,teal)
     textCenter("COTIZACIÓN N° "+quoteNumber,w/2f,151f,
      if(compact)12.5f else 17.3f,true,inkColor)
@@ -5091,7 +5111,7 @@ class MainActivity:Activity() {
     clipped(email.ifBlank{config.commercial},w/2f+62f,h-113f,cw*0.30f,7.2f)
     text("WhatsApp:",margin+7f,h-94f,7.7f,true)
     clipped(phone,margin+112f,h-94f,cw*0.36f,7.7f)
-    textCenter("BELSIPERU  •  MAQUINARIAS  •  HERRAMIENTAS  •  INDUSTRIA",
+    textCenter(config.commercial.ifBlank{config.legal}+"  •  GESTIÓN COMERCIAL",
      w/2f,h-59f,if(compact)6.8f else 10f,true,navy)
     textCenter(config.header,w/2f,h-43f,
      if(compact)5f else 7.2f,false,subdued)
