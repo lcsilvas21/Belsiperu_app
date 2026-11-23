@@ -142,7 +142,7 @@ class MainActivity:Activity() {
   fun get(key:String,otherwise:String="")=prefs.getString(key,otherwise)?:otherwise
   return CompanyPdfInfo(
    get("ruc",""),
-   get("legal","Mi negocio"),
+   get("legal",""),
    get("commercial",""),
    get("fiscal",""),
    get("business","Comercio y servicios"),
