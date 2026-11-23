@@ -693,6 +693,7 @@ class MainActivity:Activity() {
    button("◉ Entrar con huella digital"){authenticateBiometric(false)}
   }
   button("¿Olvidaste tu PIN?"){recoverPinScreen()}
+  button("Privacidad y tratamiento de datos"){privacyNotice()}
  }
  private fun recoverPinScreen(){
   sessionAuthenticated=false
@@ -808,6 +809,7 @@ class MainActivity:Activity() {
   button("🔢 Numeración automática de cotizaciones"){quoteNumberSettings()}
   button("👋 Personalizar mensaje de bienvenida"){welcomeMessageSettings()}
   button("🔐 Seguridad y recuperación"){securitySettings()}
+  button("🔏 Privacidad y datos locales"){privacyNotice()}
   heading("Otros ajustes")
   button("Configurar consulta RUC / DNI"){rucSettings()}
   info("Protección de datos","Mantén protegidas tus claves y haz copias de seguridad del catálogo. Esta APK de prueba guarda su configuración en el dispositivo.",Color.rgb(169,105,19))
@@ -1241,6 +1243,92 @@ class MainActivity:Activity() {
    "si todavía no lo tienes; la aplicación no emite comprobantes electrónicos.")
   button("🏢 Configurar datos de mi negocio"){companySettings()}
   button("Consultar privacidad y tratamiento de datos"){privacyNotice()}
+ }
+ // Privacidad accesible también desde la pantalla de PIN.
+ // No se declara inexistente transmisión alguna: el usuario puede usar
+ // consultas externas voluntarias y compartir PDFs con otras aplicaciones.
+ private fun privacyNotice(){
+  screen("Privacidad y datos")
+  button("← Regresar"){if(sessionAuthenticated)home() else lock()}
+  heading("Tu negocio, tus datos",
+   "BELSIPERU Gestión Comercial es una herramienta local para negocios. "+
+   "Cada instalación conserva su catálogo, clientes, cotizaciones, "+
+   "inventario, imágenes y preferencias en el dispositivo.")
+  info("Almacenamiento",
+   "Los datos comerciales se conservan localmente en la aplicación. "+
+   "El PIN se verifica con un hash derivado; los respaldos que crees se "+
+   "protegen con la contraseña que elijas. No hay cuentas de usuario "+
+   "ni sincronización automática entre dispositivos.")
+  info("Servicios opcionales",
+   "Al utilizar las consultas de RUC o DNI, la aplicación envía el número "+
+   "consultado al servidor HTTPS que TÚ hayas configurado. El escáner "+
+   "emplea componentes de Google Play Services. Al compartir un PDF "+
+   "por correo o mensajería, el archivo se entrega a la aplicación elegida "+
+   "por ti y puede quedar sujeto a sus propias políticas.")
+  info("Permisos y control",
+   "Puedes seleccionar archivos, compartir documentos y activar biometría "+
+   "en Android. No debes escribir claves de SUNAT ni credenciales bancarias "+
+   "en los campos comerciales. Los archivos que exportes permanecen en "+
+   "la ubicación que selecciones hasta que los borres.")
+  info("Copias de seguridad",
+   "Puedes crear un respaldo cifrado en Seguridad y recuperación. "+
+   "Guarda la contraseña por separado: sin ella no es posible restaurarlo.")
+  info("Política pública",
+   "Antes de publicar la aplicación se habilitará también un enlace HTTPS "+
+   "estable a la política de privacidad. La ficha de Google Play deberá "+
+   "declarar los datos transmitidos por funciones externas y bibliotecas.")
+  if(sessionAuthenticated){
+   button("Crear respaldo cifrado"){backupExportScreen()}
+   button("Eliminar datos de esta instalación"){deleteLocalDataScreen()}
+  }
+ }
+ private fun deleteLocalDataScreen(){
+  if(!sessionAuthenticated){lock();return}
+  screen("Borrar datos locales")
+  button("← Privacidad"){privacyNotice()}
+  heading("Eliminar información de esta instalación",
+   "Elimina los clientes, productos, cotizaciones, movimientos, fotos "+
+   "internas, ajustes, PIN y claves de recuperación. Esta acción no "+
+   "elimina archivos que hayas exportado a otras carpetas o aplicaciones.")
+  info("Haz un respaldo ANTES de borrar",
+   "Si no tienes un archivo cifrado accesible y su contraseña, "+
+   "no podrás recuperar tus datos tras la eliminación.",Color.rgb(169,64,40))
+  label("Confirma tu PIN")
+  val pin=securePinField("PIN actual")
+  label("Escribe ELIMINAR")
+  val confirmation=input("ELIMINAR")
+  button("Solicitar eliminación definitiva"){
+   if(confirmation.text.toString().trim()!="ELIMINAR"){
+    confirmation.error="Escribe ELIMINAR";return@button
+   }
+   if(!security.verifyPin(pin.text.toString())){
+    toast("PIN incorrecto o acceso bloqueado.");return@button
+   }
+   android.app.AlertDialog.Builder(this)
+    .setTitle("¿Eliminar todos los datos locales?")
+    .setMessage("No se puede deshacer. ¿Confirmas que ya guardaste una "+
+     "copia externa de tus datos y su contraseña?")
+    .setNegativeButton("Cancelar",null)
+    .setPositiveButton("Sí, eliminar"){_,_->
+     try{
+      db.close()
+      if(!deleteDatabase("belsiperu.db"))throw IllegalStateException(
+       "No fue posible eliminar la base de datos.")
+      listOf("belsiperu_company_pdf","quote_sequence","belsiperu_home_ui",
+       "ruc_service","belsiperu_recovery_contact","security")
+       .forEach{getSharedPreferences(it,MODE_PRIVATE).edit().clear().commit()}
+      filesDir.listFiles()?.forEach{it.deleteRecursively()}
+      cacheDir.listFiles()?.forEach{it.deleteRecursively()}
+      db=Store(this)
+      security=AppSecurity(this)
+      sessionAuthenticated=false
+      toast("Datos locales eliminados")
+      lock()
+     }catch(e:Exception){
+      toast("No se completó el borrado: "+(e.message?:"Error"))
+     }
+    }.show()
+  }
  }
  private fun companySettings(){
   screen("Configuración · Empresa")
@@ -2801,6 +2889,7 @@ class MainActivity:Activity() {
   return Pair(base,base*(if(taxable)1.18 else 1.0))
  }
  private fun newQuote(preselectedClientId:Long?=null,editQuoteId:Long?=null){
+  if(!companyConfigured()){companySetup();return}
   var editClientId:Long?=null
   var editCurrency="PEN"
   if(editQuoteId!=null){
@@ -3649,6 +3738,7 @@ class MainActivity:Activity() {
  }
 
  private fun pdfOptions(id:Long){
+  if(!companyConfigured()){companySetup();return}
   screen("Opciones PDF");button("← Cotizaciones"){quotes()}
   info("Modelo de proforma BELSIPERU","Se conserva el diseño aprobado. Si el producto tiene una fotografía accesible, aparecerá en el PDF.")
   label("Diseño")
@@ -5005,7 +5095,7 @@ class MainActivity:Activity() {
      w/2f,120f,if(compact)6.3f else 8.1f,true,teal)
     textCenter("COTIZACIÓN N° "+quoteNumber,w/2f,151f,
      if(compact)12.5f else 17.3f,true,inkColor)
-    text("Lima, "+formattedDate,margin,173f,8.3f,false,subdued)
+    text("Fecha: "+formattedDate,margin,173f,8.3f,false,subdued)
     text("Señores",margin+8f,191f,8f,true)
     clipped(customerName.ifBlank{"Cliente"},margin+84f,191f,cw*0.52f,8.3f)
     text(documentName,margin+8f,205f,8f,true)
@@ -5046,7 +5136,7 @@ class MainActivity:Activity() {
     clipped(config.header,x,48f,w-margin-x-42f,
      if(compact)5.3f else 7.2f,true,Color.WHITE)
     clipped("RUC "+config.ruc,x,64f,w-margin-x-42f,8f,false,Color.WHITE)
-    textRight("Lima, "+formattedDate,w-margin,107f,8.5f,false,subdued)
+    textRight("Fecha: "+formattedDate,w-margin,107f,8.5f,false,subdued)
     textCenter("PROFORMA DE VENTA",w/2f,148f,
      if(compact)15f else 20.5f,false,inkColor)
     textCenter(quoteNumber,w/2f,169f,10.8f)
