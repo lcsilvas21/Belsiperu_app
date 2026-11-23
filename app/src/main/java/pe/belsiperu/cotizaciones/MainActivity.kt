@@ -913,7 +913,7 @@ class MainActivity:Activity() {
     val manager=getSystemService(Context.FINGERPRINT_SERVICE) as?
      android.hardware.fingerprint.FingerprintManager
     @Suppress("DEPRECATION")
-    manager?.isHardwareDetected==true && manager.hasEnrolledFingerprints()
+    manager?.isHardwareDetected==true && manager?.hasEnrolledFingerprints()==true
    }
   }catch(_:Exception){false}
  }
