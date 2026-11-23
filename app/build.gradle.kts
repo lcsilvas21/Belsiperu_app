@@ -27,6 +27,7 @@ android {
         signingConfigs {
             create("playUpload") {
                 storeFile = file(uploadFile!!)
+                storeType = "pkcs12"
                 storePassword = uploadStorePass
                 keyAlias = uploadAlias
                 keyPassword = uploadKeyPass
