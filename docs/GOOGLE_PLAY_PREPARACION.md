@@ -2,6 +2,8 @@
 
 **Estado: candidato técnico; no publicado ni aprobado por Google.**
 
+**Registro desde Perú:** consulta [guía paso a paso para crear Play Console](REGISTRO_PLAY_CONSOLE_PERU.md).
+
 ## Identidad propuesta
 - Nombre: BELSIPERU Gestión Comercial
 - ID tentativo y permanente al publicar: `pe.belsiperu.gestioncomercial`
