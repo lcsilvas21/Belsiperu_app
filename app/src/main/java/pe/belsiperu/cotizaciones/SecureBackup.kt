@@ -303,21 +303,30 @@ object SecureBackup {
    }
    val backed=File(staging,"original.sqlite")
    val current=context.getDatabasePath("belsiperu.db")
+   val originalPrefs=preferenceExport(context)
+   val currentLogo=File(context.filesDir,"company_pdf_logo.png")
+   val backedLogo=File(staging,"original_logo.png")
+   val hadLogo=currentLogo.isFile
+   if(hadLogo)currentLogo.copyTo(backedLogo,overwrite=true)
    store.close()
    val originalExists=current.isFile
    if(originalExists)current.copyTo(backed,overwrite=true)
-   // Validación y preparación completas antes de sustituir la base actual.
+   // Guardamos los originales para recuperarlos si alguna fase falla.
    try{
     stagedDb.copyTo(current,overwrite=true)
     val count=rewritePhotoUris(context,current,photoMap,staging)
     restorePrefs(context,settings)
     val logo=File(staging,"company_logo.png")
-    if(logo.isFile)logo.copyTo(File(context.filesDir,"company_pdf_logo.png"),
-     overwrite=true)
+    if(logo.isFile)logo.copyTo(currentLogo,overwrite=true)
     return Restored(count,current.length())
    }catch(e:Exception){
-    if(originalExists)backed.copyTo(current,overwrite=true)
-    else current.delete()
+    try{
+     if(originalExists)backed.copyTo(current,overwrite=true)
+     else current.delete()
+     restorePrefs(context,originalPrefs)
+     if(hadLogo)backedLogo.copyTo(currentLogo,overwrite=true)
+     else currentLogo.delete()
+    }catch(rollback:Exception){e.addSuppressed(rollback)}
     throw e
    }
   }finally{staging.deleteRecursively()}
