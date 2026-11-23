@@ -993,7 +993,7 @@ class MainActivity:Activity() {
      }
      override fun onAuthenticationError(errorCode:Int,errString:CharSequence){
       if(errorCode!=android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED &&
-       errorCode!=android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_NEGATIVE_BUTTON){
+       errorCode!=android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_CANCELED){
        toast("Biometría no disponible: "+errString.toString()+". Usa tu PIN.")
       }
      }
