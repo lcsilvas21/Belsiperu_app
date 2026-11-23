@@ -108,6 +108,10 @@ class Store(ctx: Context): SQLiteOpenHelper(ctx,"belsiperu.db",null,8) {
 }
 class MainActivity:Activity() {
  private lateinit var db:Store
+ private lateinit var security:AppSecurity
+ private var sessionAuthenticated=false
+ private var backgroundSince=0L
+ private var pendingBackupPassword:CharArray?=null
  private lateinit var body:LinearLayout
  private val navy=Color.rgb(13,43,91)
  private val green=Color.rgb(14,122,77)
@@ -505,10 +509,29 @@ class MainActivity:Activity() {
   cur.close();return n
  }
 
- override fun onCreate(savedInstanceState:Bundle?) { super.onCreate(savedInstanceState);window.statusBarColor=navy;db=Store(this); lock() }
+ override fun onCreate(savedInstanceState:Bundle?) {
+  super.onCreate(savedInstanceState)
+  window.statusBarColor=navy
+  db=Store(this)
+  security=AppSecurity(this)
+  lock()
+ }
+ override fun onStop(){
+  super.onStop()
+  backgroundSince=android.os.SystemClock.elapsedRealtime()
+ }
+ override fun onStart(){
+  super.onStart()
+  if(backgroundSince>0 && sessionAuthenticated &&
+   android.os.SystemClock.elapsedRealtime()-backgroundSince>90_000L){
+   sessionAuthenticated=false
+   lock()
+  }
+  backgroundSince=0L
+ }
 
  private fun screen(title:String) {
-  val login=title=="Acceso seguro"
+  val login=title=="Acceso seguro" || !sessionAuthenticated
   val outer=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(navy)}
   if(Build.VERSION.SDK_INT>=35){
    outer.setOnApplyWindowInsetsListener{_,ins->
@@ -599,23 +622,118 @@ class MainActivity:Activity() {
     toast("No se pudo abrir el escáner. Verifica Google Play Services e inténtalo con conexión la primera vez.")
    }
  }
+ private fun securePinField(hint:String):EditText=
+  input(hint).apply{
+   inputType=InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+   filters=arrayOf(android.text.InputFilter.LengthFilter(6))
+  }
+ private fun unlockHome(){
+  sessionAuthenticated=true
+  home()
+  if(!security.hasRecoveryCode()){
+   try{showRecoveryCode(security.rotateRecoveryCode(),
+    "Guarda tu código de emergencia")}
+   catch(e:Exception){toast("No se pudo generar el código: "+(e.message?:"Error"))}
+  }
+ }
+ private fun showRecoveryCode(code:String,title:String){
+  AlertDialog.Builder(this).setTitle(title)
+   .setMessage("CÓDIGO DE EMERGENCIA:\n\n"+code+
+    "\n\nEs de un solo uso y permite crear un PIN nuevo si lo olvidas. "+
+    "Guárdalo FUERA de este celular, por ejemplo en un gestor de contraseñas o en papel. "+
+    "No se podrá volver a consultar; sí podrás generar otro desde Configuración tras verificar tu PIN.")
+   .setCancelable(false)
+   .setPositiveButton("Ya guardé el código"){_,_->if(sessionAuthenticated)home() else lock()}
+   .show()
+ }
  private fun lock(){
+  sessionAuthenticated=false
   screen("Acceso seguro")
-  label("Versión inicial: PIN local. La autenticación biométrica y el cifrado se incorporarán en una versión posterior.")
-  val prefs=getSharedPreferences("security",MODE_PRIVATE)
-  if(!prefs.contains("pin"))label("Crea tu PIN de 4 a 6 dígitos")
-  val e=input("PIN")
-  e.inputType=InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
-  button(if(prefs.contains("pin")) "Entrar" else "Crear PIN y entrar") {
-   val pin=e.text.toString()
-   if(!prefs.contains("pin")) {
-    if(pin.length !in 4..6) toast("Usa entre 4 y 6 dígitos")
-    else {prefs.edit().putString("pin",pin).apply();home()}
-   } else if(pin==prefs.getString("pin",""))home() else toast("PIN incorrecto")
+  heading("Protección BELSIPERU",
+   "PIN privado de 4 a 6 dígitos. El acceso con huella se puede activar después en Configuración.")
+  if(!security.hasPin()){
+   label("Crear PIN")
+   val first=securePinField("Nuevo PIN de 4 a 6 dígitos")
+   label("Confirmar PIN")
+   val second=securePinField("Repite el PIN")
+   button("Crear PIN y entrar"){
+    if(first.text.toString()!=second.text.toString()){
+     toast("Los PIN no coinciden.");return@button
+    }
+    try{
+     val code=security.initialize(first.text.toString())
+     first.text.clear();second.text.clear()
+     sessionAuthenticated=true
+     showRecoveryCode(code,"Tu código de recuperación: guárdalo ahora")
+    }catch(e:Exception){toast(e.message?:"PIN inválido")}
+   }
+   return
+  }
+  label("PIN de acceso")
+  val pin=securePinField("Ingresa tu PIN")
+  button("Entrar"){
+   val wait=security.lockedSeconds()
+   if(wait>0){
+    toast("Demasiados intentos. Inténtalo en "+wait+" segundos.")
+    return@button
+   }
+   if(security.verifyPin(pin.text.toString())){
+    pin.text.clear()
+    unlockHome()
+   }else{
+    pin.text.clear()
+    val delay=security.lockedSeconds()
+    toast(if(delay>0)"Acceso bloqueado durante "+delay+" segundos."
+     else "PIN incorrecto")
+   }
+  }
+  if(security.isBiometricEnabled()){
+   button("◉ Entrar con huella digital"){authenticateBiometric(false)}
+  }
+  button("¿Olvidaste tu PIN?"){recoverPinScreen()}
+ }
+ private fun recoverPinScreen(){
+  sessionAuthenticated=false
+  screen("Recuperar PIN")
+  button("← Volver al acceso"){lock()}
+  if(!security.hasRecoveryCode()){
+   info("No se configuró un código de emergencia",
+    "Esta instalación no tiene recuperación segura activada. "+
+    "No borres datos ni desinstales la aplicación: podrías perder el inventario. "+
+    "El correo no puede restablecer el PIN sin un servicio de verificación previamente configurado.",
+    Color.rgb(173,105,19))
+   return
+  }
+  heading("Restablecer PIN con código de emergencia",
+   "Introduce el código que recibiste cuando creaste o actualizaste tu acceso.")
+  label("Código de emergencia")
+  val code=input("XXXXX-XXXXX-XXXXX-XXXXX")
+  code.filters=arrayOf(android.text.InputFilter.LengthFilter(27))
+  label("PIN nuevo")
+  val p1=securePinField("PIN nuevo de 4 a 6 números")
+  label("Confirmar PIN nuevo")
+  val p2=securePinField("Repite el PIN")
+  button("Restablecer PIN"){
+   if(p1.text.toString()!=p2.text.toString()){
+    toast("Los PIN no coinciden.");return@button
+   }
+   if(security.lockedSeconds()>0){
+    toast("Demasiados intentos; inténtalo más tarde.");return@button
+   }
+   try{
+    val next=security.recoverPin(code.text.toString(),p1.text.toString())
+    if(next==null){
+     toast("Código no válido o PIN fuera de rango.");return@button
+    }
+    code.text.clear();p1.text.clear();p2.text.clear()
+    sessionAuthenticated=true
+    showRecoveryCode(next,"PIN restablecido: guarda tu NUEVO código")
+   }catch(e:Exception){toast("No se pudo recuperar: "+(e.message?:"Error"))}
   }
  }
 
  private fun home(){
+  if(!sessionAuthenticated){lock();return}
   screen("Inicio")
   val hero=LinearLayout(this).apply{
    orientation=LinearLayout.VERTICAL;setPadding(d(19),d(20),d(19),d(20))
@@ -686,6 +804,7 @@ class MainActivity:Activity() {
   button("🖨 Impresión · Bancos, cabecera y pie de página"){printingSettings()}
   button("🔢 Numeración automática de cotizaciones"){quoteNumberSettings()}
   button("👋 Personalizar mensaje de bienvenida"){welcomeMessageSettings()}
+  button("🔐 Seguridad y recuperación"){securitySettings()}
   heading("Otros ajustes")
   button("Configurar consulta RUC / DNI"){rucSettings()}
   info("Protección de datos","Mantén protegidas tus claves y haz copias de seguridad del catálogo. Esta APK de prueba guarda su configuración en el dispositivo.",Color.rgb(169,105,19))
